@@ -1,0 +1,1661 @@
+Sub CMS_validate()
+	'==================================================================
+	' Subroutine checks for to make sure that all tables in database CSTM exists.
+	' If any table is missing this subroutine will create missing table.
+	'
+	' Extra fields that we have added or altered to any table in database CSTM 
+	' since going to production will be added or altered.
+	'==================================================================
+	
+	'Added 01-13-2010 - Code calls Function to check for existence of  BatchInput Table
+	'Call CreateBatchInputTable(sQuery)
+
+	'Code calls function to check for exists of boxdimension table
+	'Call CreateBoxDimensionTable(sQuery)	
+
+	'Code calls function to check for exists of BwtiService table
+	'Call CreateBwtiServiceTable(sQuery)	
+	
+	'Code calls function to check for exists of Calendar table
+	'Call CreateCalendarTable(sQuery)
+
+	'Code calls function to check for exists of Customer table
+	'Call CreateCustomerTable(sQuery)
+
+	'Code calls function to check for exists of Department table
+	'Call CreateDepartmentTable(sQuery)
+	
+	'Code calls function to check for existence of Feeder_addresses table.
+	Call CreateFeederAddressTable(sQuery)
+	
+	'Code calls function to check for exists of GeneralSetup table
+	'Call CreateGeneralSetupTable(sQuery)
+	
+	'Code calls function to check for exists of History table
+	'Call CreateHistoryTable(sQuery)
+	
+	'Code calls function to check for exists of History1 table
+	'Call CreateHistory1Table(sQuery)
+
+	'Added 06-30-09 - Code calls function to check for exists of LTLCarrier table
+	'Call CreateLTLCarrierTable(sQuery)	
+	
+	'Added 01-13-2010 - Calls function to check for existence of LTLCommodity table
+	'Call CreateLTLCommodityTable(sQuery)
+
+	'Code calls function to check for exists of ShipperLocations table
+	'Call CreateShipperLocationsTable(sQuery)
+	
+	'Code calls function to check for exists of ShipVia table
+	'Call CreateShipViaTable(sQuery)
+	
+	'Code calls function to check for exists of TransactionLog table
+	'Call CreateTransactionLogTable(sQuery)
+
+	'Code calls function to check for exists of UserTable table
+	'Call CreateUserTable(sQuery)
+	
+	'Added 06-30-09 - Code calls function to check for exists of Warehouse table
+	'Call CreateWarehouseTable(sQuery)	
+	
+	'Added 03-25-2010 - Code calls function to alter BatchInput table
+	'Call AlterBatchInputTable()		
+	
+	'Code calls function to alter Customer table
+	'Call AlterCustomerTable()
+	
+	'Code calls function to alter GeneralSetup Table
+	'Call AlterGeneralSetupTable()
+	
+	'Code calls function to alter History Table
+	'Call AlterHistoryTable()
+	
+	'Added 05-30-2012 - Code calls function to alter History1 Table
+	'Call AlterHistory1Table()
+	
+	'Code calls function to alter ShipVia Table
+	'Call AlterShipViaTable()
+	
+	'Code calls function to alter TransactionLog Table
+	'Call AlterTransactionLogTable()
+	
+	'Added 11/10/09 - Calls function to alter User Table
+	Call AlterUserTable()
+	
+	'Added 01/13/2010 - Calls function to alter Warehouse Table
+	'Call AlterWarehouseTable()
+
+
+	'Codes delete records in table TransactionLog over 45 days old
+	archivedate = celse(dateadd("d", -45, now()),"yyyy-mm-dd") '& " 00:00:00"
+	sQuery = "Delete from transactionlog where TransactionDateTime < '" & archivedate & "'"
+	pcn.execute(sQuery)
+	
+	'Code empties RecordSet
+	Set rsFields = Nothing	
+	Set rsTables = Nothing
+
+End Sub
+
+
+Function AlterCustomerTable()
+	'==================================================================
+	' Function checks for exists of fields that have beed added or modified in
+	' table Customer in database CSTM. Since going into production. Updates table
+	' with field changes.
+	'==================================================================
+	
+	'Changes size of field DefaultPaymentType
+	Set rsFields = pcn.execute("show columns from Customer where field = 'DefaultPaymentType'")
+	If rsfields.fields("type") <> "varchar(20)" then 
+		pcn.execute ("alter table `cstm`.`customer` change `DefaultPaymentType` `DefaultPaymentType` varchar (20)  NULL")
+	End If
+
+End Function
+
+Function AlterGeneralSetupTable()
+	'==================================================================
+	' Function checks for exists of fields that have beed added or modified in
+	' table GeneralSetup in database CSTM. Since going into production. 
+	' Updates table with field changes.
+	'==================================================================
+	
+	'Checks for field UseCustomertable
+	Set rsFields = pcn.execute("show columns from GeneralSetup where field = 'UseCustomerTable'")
+	If rsfields.eof then 
+		pcn.execute ("alter table `cstm`.`generalsetup` add column `UseCustomerTable` varchar (1) DEFAULT '0' COMMENT '0=Not Used, 1=CSTM Datbase, 2=Customer Database'")
+	End If
+	
+	'Checks for field DuplicateIDCheck
+	Set rsFields = pcn.execute("show columns from GeneralSetup where field = 'DuplicateIDCheck'")
+	If rsFields.eof then
+		pcn.execute("alter table `cstm`.`GeneralSetup` add column `DuplicateIDCheck` varchar (1) DEFAULT 'N' NULL")  
+	End If
+	
+End Function
+
+Function AlterHistoryTable()
+	'==================================================================
+	' Function checks for exists of fields that have beed added or modified in
+	' table History in database CSTM. Since going into production. Updates table
+	' with field changes.
+	'==================================================================
+	
+	'Checks for field SaturdayFlag
+	Set rsFields = pcn.execute("show columns from history where field = 'SaturdayFlag'")
+	If rsFields.eof then
+		pcn.execute("alter table `cstm`.`history` add column `SaturdayFlag` varchar (1) DEFAULT 'N' NULL")  
+	End If
+	
+	'Checks for field HazardFlag
+	Set rsFields = pcn.execute("show columns from history where field = 'HazardFlag'")
+	If rsFields.eof then
+		pcn.execute("alter table `cstm`.`history` add column `HazardFlag` varchar (1) DEFAULT 'N' NULL")  
+	End If
+	
+	'Checks for field UserText1
+	Set rsFields = pcn.execute("show columns from history where field = 'Usertext1'")
+	If rsFields.eof then
+		pcn.execute("alter table `cstm`.`history` add column `Usertext1` varchar (255) NULL")  
+	End If
+	
+	'Checks for field UserText2
+	Set rsFields = pcn.execute("show columns from history where field = 'Usertext2'")
+	If rsFields.eof then
+		pcn.execute("alter table `cstm`.`history` add column `Usertext2` varchar (255)  NULL")  
+	End If
+	
+	'Checks for field UserText3	
+	Set rsFields = pcn.execute("show columns from history where field = 'Usertext3'")
+	If rsFields.eof then
+		pcn.execute("alter table `cstm`.`history` add column `Usertext3` varchar (255) NULL")  
+	End If
+	
+	'Checks for field UserText4
+	Set rsFields = pcn.execute("show columns from history where field = 'Usertext4'")
+	If rsFields.eof then
+		pcn.execute("alter table `cstm`.`history` add column `Usertext4` varchar (255)  NULL")  
+	End If
+	
+	'Checks for field UserText5
+	Set rsFields = pcn.execute("show columns from history where field = 'Usertext5'")
+	If rsFields.eof then
+		pcn.execute("alter table `cstm`.`history` add column `Usertext5` varchar (255)  NULL")  
+	End If
+
+	'Changes size of field ConsigneeSate
+	Set rsFields = pcn.execute("show columns from history where field = 'ConsigneeState'")
+	If rsfields.fields("type") <> "varchar(20)" then 
+		sQuery = "alter table `cstm`.`history` change `ConsigneeState` `ConsigneeState` varchar (20)  NULL"
+		pcn.execute(sQuery)
+	End If
+		
+	'Changes size of field TPBState
+	Set rsFields = pcn.execute("show columns from history where field = 'TPBState'")
+	If rsfields.fields("type") <> "varchar(20)" then 
+		sQuery = "alter table `cstm`.`history` change `TPBState` `TPBState` varchar (20)  NULL"
+		pcn.execute(sQuery)
+	End If
+	
+	'Changes size of field TPBZip
+	Set rsFields = pcn.execute("show columns from history where field = 'TPBZip'")
+	If rsfields.fields("type") <> "varchar(20)" then 
+		sQuery = "alter table `cstm`.`history` change `TPBZip` `TPBZip` varchar (20)  NULL"
+		pcn.execute(sQuery)
+	End If
+
+	'03-26-2009 - Changed size of field Consignee Phone from 20 Characters to 50 characters
+	Set rsFields = pcn.execute("show columns from history where field = 'ConsigneePhone'")
+	If rsfields.fields("type") <> "varchar(50)" then 
+		sQuery = "alter table `cstm`.`history` change `ConsigneePhone` `ConsigneePhone` varchar (50)  NULL"
+		pcn.execute(sQuery)
+		
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterHistoryTable"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If	
+	End If	
+	
+	'Added 03-25-2010 - Check for field Hazard Fee
+	Set rsFields = pcn.execute("show columns from history where field = 'HazardFee'")
+	If rsfields.eof then 
+		sQuery = "alter table `cstm`.`history` Add Column `HazardFee` Decimal(9,3)  Default '0.00'"
+		pcn.execute(sQuery)
+		
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterHistoryTable"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If		
+	End If	
+	
+	'Added 03-25-2010 - Check for field AdditionalTrackingNumber
+	Set rsFields = pcn.execute("show columns from history where field = 'AdditionalTrackingNumber'")
+	If rsfields.eof then 
+		sQuery = "alter table `cstm`.`history` Add Column `AdditionalTrackingNumber` Varchar(30)  NULL"
+		pcn.execute(sQuery)
+		
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterHistoryTable"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If
+	End If
+
+	'Added 05-30-2012 - Check for field LPNNumber
+	Set rsFields = pcn.execute("show columns from history where field = 'LPNNumber'")
+	If rsfields.eof then 
+		sQuery = "alter table `cstm`.`history` Add Column `LPNNumber` Varchar(9)  NULL"
+		pcn.execute(sQuery)
+		
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterHistoryTable"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If
+	End If	
+	
+	'Added 05-30-2012 - Check for field ExpectedPackageWeight
+	Set rsFields = pcn.execute("show columns from history where field = 'ExpectedPackageWeight'")
+	If rsfields.eof then 
+		sQuery = "alter table `cstm`.`history` Add Column `ExpectedPackageWeight` Decimal(10,4)  Default '0.0000'"
+		pcn.execute(sQuery)
+		
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterHistoryTable"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If
+	End If	
+	
+	'Added 05-30-2012 - Check for field WeightVarianceOverRide
+	Set rsFields = pcn.execute("show columns from history where field = 'WeightVarianceOverRide'")
+	If rsfields.eof then 
+		sQuery = "alter table `cstm`.`history` Add Column `WeightVarianceOverRide` VarChar(1) default 'N' COMMENT 'Supervisor Override (Y or N)'"
+		pcn.execute(sQuery)
+		
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterHistoryTable"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If
+	End If		
+	
+End Function
+
+Function AlterShipViaTable()
+	'==================================================================
+	' Function checks for exists of fields that have beed added or modified in
+	' table ShipVia in database CSTM. Since going into production. Updates table
+	' with field changes.
+	'==================================================================
+	
+	'Changes size of field PaymentType
+	Set rsFields = pcn.execute("show columns from shipvia where field = 'PaymentType'")
+	If rsfields.fields("Type") <> "varchar(50)" then 
+		sQuery = "alter table `cstm`.`shipvia` change `PaymentType` `PaymentType` varchar (50)  NULL"
+		pcn.execute(sQuery)
+	End If
+	
+	'04/05/09 Added field SCAC to ShipVia table
+	Set rsFields = pcn.execute("show columns from shipvia where field = 'SCAC'")
+	If rsfields.eof then 
+		sQuery = "alter table `cstm`.`shipvia` add column `SCAC` varchar (10)  NULL"
+		pcn.execute(sQuery)
+	End If
+	
+	'Added 10/07/2010 - Code looks for field PackagingType
+	Set rsFields = pcn.execute("show columns from shipvia where field = 'PackagingType'")
+	
+	'Code clears error and allows Proship to continue
+	Err.Clear	
+	
+	If rsfields.eof then 
+	
+		On Error Resume Next
+		pcn.Execute("alter table `cstm`.`shipvia` add column `PackagingType` varchar (20) Default 'CUSTOM' COMMENT 'Packaging Type used by Manifest System'")
+		
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating database
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterShipViaTable"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If
+	End If
+	
+End Function
+
+Function AlterTransactionLogTable()
+	'==================================================================
+	' Function checks for exists of fields that have beed added or modified in
+	' table TransactionLog in database CSTM. Since going into production. 
+	' Updates table with field changes.
+	'==================================================================
+	
+	'Checks for field StationName
+	Set rsFields = pcn.execute("show columns from transactionlog where field = 'StationName'")
+	If rsFields.eof then
+		pcn.execute("alter table `cstm`.`transactionlog` add column `StationName` varchar (20) NULL")  
+	End If
+	
+	'Checks for field ShipmentID
+	Set rsFields = pcn.execute("show columns from transactionlog where field = 'ShipmentID'")
+	If rsFields.eof then
+		pcn.execute("alter table `cstm`.`transactionlog` add column `ShipmentID` varchar (20) NULL")  
+	End If	
+
+End Function
+
+Function AlterUserTable()
+	'==================================================================
+	' Function checks for exists of fields that have beed added or modified in
+	' table User in database CSTM. Since going into production. 
+	' Updates table with field changes.
+	'==================================================================
+	
+	'Checks for field SystemName
+	Set rsFields = pcn.execute("show columns from UserTable where field = 'SystemName'")
+	If rsFields.eof then
+		pcn.execute("alter table `cstm`.`UserTable` add column `SystemName` varchar (20) NULL")  
+	End If
+	
+	'Checks for field MessageServer
+	Set rsFields = pcn.execute("show columns from UserTable where field = 'MessageServer'")
+	If rsFields.eof then
+		pcn.execute("alter table `cstm`.`UserTable` add column `MessageServer` varchar (20) NULL")  
+	End If
+	
+	'Checks for field GroupName
+	Set rsFields = pcn.execute("show columns from UserTable where field = 'GroupName'")
+	If rsFields.eof then
+		pcn.execute("alter table `cstm`.`UserTable` add column `GroupName` varchar (20) NULL")  
+	End If
+	
+	'Checks for field Mailroom
+	Set rsFields = pcn.execute("show columns from UserTable where field = 'MailRoom'")
+	If rsfields.eof then 
+		pcn.execute ("alter table `cstm`.`usertable` add column `Mailroom` varchar (1) DEFAULT 'N' COMMENT '(Y/N)'")
+	End If
+
+End Function
+
+
+Function CreateBoxDimensionTable(sQuery)
+	'==================================================================
+	' Function checks for exists of table BoxDimension in database CSTM. 
+	' If not found table is created.
+	'==================================================================
+	sQuery = ""
+	
+	Set rsTables = pCN.execute("show tables from cstm WHERE TABLES_IN_CSTM = 'boxdimension'")
+	If rsTables.eof Then
+		sQuery = "CREATE TABLE `boxdimension` ( "
+		sQuery = sQuery & "`BoxType` varchar(15) NOT NULL, "
+		sQuery = sQuery & "`BoxDescription` varchar(50) NOT NULL, "
+		sQuery = sQuery & "`BoxLength` decimal(5,2) NOT NULL COMMENT '##x##x## for format', "
+		sQuery = sQuery & "`BoxWidth` decimal(5,2) NOT NULL, "
+		sQuery = sQuery & "`BoxHeight` decimal(5,2) NOT NULL, "
+		sQuery = sQuery & "`BoxWeight` decimal(6,2) default NULL, "
+		sQuery = sQuery & "`IgnoreBox` varchar(1) default 'N', "
+		sQuery = sQuery & "PRIMARY KEY  (`BoxType`)) ENGINE=MyISAM DEFAULT CHARSet=latin1; "
+		pCN.Execute(sQuery)
+	End If
+
+	'Codes empties recordset
+	Set rsTables = Nothing
+	
+End Function
+
+Function CreateBwtiServiceTable(sQuery)
+	'==================================================================
+	' Function checks for exists of table BwtiService in database CSTM. If
+	' not found table is created.
+	'==================================================================
+	sQuery = ""
+	
+	Set rsTables = pCN.execute("show tables from cstm WHERE TABLES_IN_CSTM = 'BWTISERVICE'")
+	If rsTables.eof Then
+		sQuery = "CREATE TABLE `bwtiservice` (`Service` varchar(50) NOT NULL,`Description` varchar(50) default NULL, " 
+        sQuery = sQuery & " PRIMARY KEY  (`Service`) ) ENGINE=MyISAM DEFAULT CHARSet=latin1 "
+		pCN.Execute(sQuery)
+	End If	
+
+	'Codes empties recordset
+	Set rsTables = Nothing
+	
+End Function
+
+Function CreateCustomerTable(sQuery)
+	'==================================================================
+	' Function checks for exists of table Customer in database CSTM. If
+	' not found table is created.
+	'==================================================================
+	sQuery = ""
+	
+	Set rsTables = pCN.execute("show tables from cstm WHERE TABLES_IN_CSTM = 'customer'")
+	If rsTables.eof Then	
+		sQuery = "CREATE TABLE `customer` ( "
+		sQuery = sQuery & "`Id` int(11) NOT NULL auto_increment, "
+		sQuery = sQuery & "`CustomerID` varchar(20) default NULL, "
+		sQuery = sQuery & "`CustomerName` varchar(30) default NULL, "
+		sQuery = sQuery & "`CustomerContact` varchar(30) default NULL, "
+  		sQuery = sQuery & "`CustomerAddress1` varchar(30) default NULL, "
+  		sQuery = sQuery & "`CustomerAddress2` varchar(30) default NULL, "
+  		sQuery = sQuery & "`CustomerAddress3` varchar(30) default NULL, "
+  		sQuery = sQuery & "`CustomerCity` varchar(30) default NULL, "
+  		sQuery = sQuery & "`CustomerState` varchar(30) default NULL, "
+  		sQuery = sQuery & "`CustomerZip` varchar(10) default NULL, "
+  		sQuery = sQuery & "`CustomerPhone` varchar(20) default NULL, "
+  		sQuery = sQuery & "`CustomerCountry` varchar(30) default 'US' COMMENT 'US', "
+  		sQuery = sQuery & "`CustomerEmail` varchar(40) default NULL, "
+  		sQuery = sQuery & "`CustomerComments` varchar(50) default NULL, "
+  		sQuery = sQuery & "`ResidentialFlag` char(1) default 'N' COMMENT 'N', "
+  		sQuery = sQuery & "`DefaultPaymentType` varchar(20) default 'SHIPPER' COMMENT 'SHIPPER', "
+  		sQuery = sQuery & "`UPSAccountNumber` varchar(10) default NULL, "
+  		sQuery = sQuery & "`FedExAccountNumber` varchar(9) default NULL, "
+  		sQuery = sQuery & "`DHLAccountNumber` varchar(9) default NULL, "
+  		sQuery = sQuery & "`USPostalAccount` varchar(10) default NULL, "
+  		sQuery = sQuery & "`BillToCustomerName` varchar(30) default NULL, "
+  		sQuery = sQuery & "`BillToCustomerAddress1` varchar(30) default NULL, "
+  		sQuery = sQuery & "`BillToCustomerAddress2` varchar(30) default NULL, "
+  		sQuery = sQuery & "`BillToCity` varchar(30) default NULL, "
+  		sQuery = sQuery & "`BillToState` varchar(30) default NULL, "
+  		sQuery = sQuery & "`BillToZip` varchar(10) default NULL, "
+  		sQuery = sQuery & "`BillToCountry` varchar(30) default NULL, "
+  		sQuery = sQuery & "`UCC128` varchar(20) default NULL, "
+  		sQuery = sQuery & "`CustomForm1` varchar(40) default NULL, "
+  		sQuery = sQuery & "`CustomForm2` varchar(40) default NULL, "
+  		sQuery = sQuery & "`UserField1` varchar(50) default NULL, "
+  		sQuery = sQuery & "`UserField2` varchar(50) default NULL, "
+  		sQuery = sQuery & " PRIMARY KEY  (`Id`)) ENGINE=MyISAM AUTO_INCREMENT=185 DEFAULT CHARSET=latin1; "	
+		pCN.Execute(sQuery)
+	End If
+
+	'Codes empties recordset
+	Set rsTables = Nothing
+	
+End Function
+
+Function CreateDepartmentTable(sQuery)
+	'==================================================================
+	' Function checks for exists of table Department in database CSTM. If
+	' not found table is created.
+	'==================================================================
+	sQuery = ""
+	
+	Set rsTables = pCN.execute("show tables from cstm WHERE TABLES_IN_CSTM = 'department'")
+	If rsTables.eof Then
+		sQuery = "CREATE TABLE `department` ( "
+		sQuery = sQuery & "`Id` int(11) NOT NULL auto_increment, "
+		sQuery = Squery & "`DepartmentCode` varchar(20) NOT NULL, "
+		sQuery = sQuery & "`DepartmentName` varchar(40) default NULL, "
+		sQuery = sQuery & "`DepartmentComment` varchar(200) default NULL, "
+		sQuery = SQuery & "`DepartmentContact` varchar(40) default NULL, "
+		sQuery = sQuery & "`DepartmentEmail` varchar(40) default NULL, "
+		sQuery = sQuery & "`DepartmentPhone` varchar(25) default NULL, "
+		sQuery = sQuery & "`Active` varchar(1) default 'Y' COMMENT 'Y or N', "
+		sQuery = sQuery & "PRIMARY KEY  (`Id`)) ENGINE=MyISAM AUTO_INCREMENT=9 DEFAULT CHARSET=latin1; "
+		pCN.Execute(sQuery)
+	End If	
+
+	'Codes empties recordset
+	Set rsTables = Nothing
+	
+End Function
+
+Function CreateGeneralSetupTable(sQuery)
+	'==================================================================
+	' Function checks for exists of table GeneralSetup in database CSTM. If table
+	' not found it is created.
+	'==================================================================
+	sQuery = ""
+	
+	Set rsTables = pCN.execute("show tables from cstm WHERE TABLES_IN_CSTM = 'generalsetup'")
+	If rsTables.eof Then
+		sQuery = "CREATE TABLE `generalsetup` ( "
+		sQuery = sQuery & "`id` int(11) NOT NULL auto_increment, "
+  		sQuery = sQuery & "`UseBoxDimensionTable` varchar(1) default '0' COMMENT '0=Not Used, 1=CSTM Datbase, 2=Customer Database', "
+  		sQuery = sQuery & "`UseDepartmentTable` varchar(1) default '0' COMMENT '0=Not Used, 1=CSTM Datbase, 2=Customer Database', "
+  		sQuery = sQuery & "`UseShipViaTable` varchar(1) default '0' COMMENT '0=Not Used, 1=CSTM Datbase, 2=Customer Database', "
+  		sQuery = sQuery & "`UseUserTable` varchar(1) default '0' COMMENT '0=Not Used, 1=CSTM Datbase, 2=Customer Database', "
+  		sQuery = sQuery & "`UseCustomerTable` varchar(1) default '0' COMMENT '0=Not Used, 1=CSTM Datbase by Customer ID, 2=CSTM Database by Customer Name', "
+  		sQuery = sQuery & "`PickerPackerValidation` varchar(1) default 'N' COMMENT 'Y or N', "
+  		sQuery = sQuery & "`AddShippingtoCOD` varchar(1) default 'N' COMMENT 'Y or N', "
+  		sQuery = sQuery & "`AddDVtoCOD` varchar(1) default 'N' COMMENT 'Y or N', "
+  		sQuery = sQuery & "`DefaultHandling` decimal(10,3) default NULL, "
+  		sQuery = sQuery & "`SplitCODinMultiple` varchar(1) default 'N' COMMENT 'Y or N', "
+  		sQuery = sQuery & "`CarrierReference1` varchar(40) default NULL, "
+  		sQuery = sQuery & "`CarrierReference2` varchar(40) default NULL, "
+  		sQuery = sQuery & "`UCC128Holder` varchar(20) default NULL, "
+  		sQuery = sQuery & "`DuplicateIDCheck` varchar(1) default 'N', "
+  		sQuery = sQuery & "PRIMARY KEY  (`id`)) ENGINE=MyISAM AUTO_INCREMENT=2 DEFAULT CHARSET=latin1 ROW_FORMAT=DYNAMIC; "
+		pCN.Execute(sQuery)
+	End If
+
+	'Codes empties recordset
+	Set rsTables = Nothing
+	
+End Function
+
+Function CreateHistoryTable(sQuery)
+	'==================================================================
+	' Function checks for exists of table History in database CSTM. If table
+	' not found it is created.
+	'==================================================================
+	sQuery = ""
+	
+	Set rsTables = pCN.execute("show tables from cstm WHERE TABLES_IN_CSTM = 'History'")
+	If rsTables.eof Then	
+		sQuery = "CREATE TABLE `history` ( "
+		sQuery = sQuery & "`id` int(11) NOT NULL auto_increment, "
+		sQuery = sQuery & " `PackageID` varchar(30) default NULL, "
+		sQuery = sQuery & "`InvoiceNumber` varchar(30) default NULL, "
+		sQuery = sQuery & "`Shipper` varchar(15) default NULL, "
+		sQuery = sQuery & "`OriginZip` varchar(10) default NULL, "
+		sQuery = sQuery & "`ConsigneeNumber` varchar(20) default NULL COMMENT 'ShipTo', "
+		sQuery = sQuery & "`ConsigneeContact` varchar(50) default NULL, "
+		sQuery = sQuery & "`ConsigneeCompany` varchar(50) default NULL, "
+		sQuery = sQuery & "`ConsigneeAddress1` varchar(50) default NULL, "
+		sQuery = sQuery & "`ConsigneeAddress2` varchar(50) default NULL, "
+		sQuery = sQuery & "`ConsigneeAddress3` varchar(50) default NULL, "
+		sQuery = sQuery & "`ConsigneeCity` varchar(50) default NULL, "
+		sQuery = sQuery & "`ConsigneeState` varchar(20) default NULL, "
+		sQuery = sQuery & "`ConsigneeZip` varchar(15) default NULL, "
+		sQuery = sQuery & "`ConsigneePhone` varchar(20) default NULL, "
+		sQuery = sQuery & "`ConsigneeBillTo` varchar(15) default NULL COMMENT 'BillTo', "
+		sQuery = sQuery & "`Residential` varchar(1) default 'N', "
+		sQuery = sQuery & "`Zone` varchar(10) default NULL, "
+		sQuery = sQuery & "`CountryCode` varchar(25) default NULL, "
+		sQuery = sQuery & "`ProshipCarrier` varchar(30) default NULL, "
+		sQuery = sQuery & "`CustomerShipMethodIn` varchar(20) default NULL COMMENT 'Inbound', "
+		sQuery = sQuery & "`CustomerShipMethodOut` varchar(20) default NULL, "
+		sQuery = sQuery & "`OriginCompany` varchar(50) default NULL, "
+		sQuery = sQuery & "`Carrier` varchar(25) default NULL, "
+		sQuery = sQuery & "`Class` varchar(30) default NULL, "
+		sQuery = sQuery & "`Operator` varchar(30) default NULL, "
+		sQuery = sQuery & "`Picker` varchar(30) default NULL, "
+		sQuery = sQuery & "`Packer` varchar(30) default NULL, "
+		sQuery = sQuery & "`BilledWeight` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "`ActualWeight` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "`CodAmount` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "`CodFee` decimal(10,2) default '0.00', "
+		sQuery = sQuery & "`CODPaymentMethod` varchar(10) default NULL, "
+		sQuery = sQuery & "`BaseCharge` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "`TotalCharge` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "`ListRate` decimal(10,3) default '0.000' COMMENT 'Used for Fedex Server', "
+		sQuery = sQuery & "`Discount` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "`AddlHandlingFee` decimal(10,3) default '0.000' COMMENT 'book rate of addl fees', "
+		sQuery = sQuery & "`ExtendedAreaFee` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "`Special` decimal(10,3) default '0.000' COMMENT 'List of all fees and charges', "
+		sQuery = sQuery & "`MiscTxt1` varchar(40) default NULL, "
+		sQuery = sQuery & "`CurBox` decimal(4,0) default NULL, "
+		sQuery = sQuery & "`MaxBox` decimal(4,0) default NULL, "
+		sQuery = sQuery & "`PONumber` varchar(50) default NULL, "
+		sQuery = sQuery & "`PLDReference1` varchar(50) default NULL, "
+		sQuery = sQuery & "`PLDReference2` varchar(50) default NULL, "
+		sQuery = sQuery & "`PSVoidID` varchar(50) default NULL, "
+		sQuery = sQuery & "`TrackingNumber` varchar(50) default NULL, "
+		sQuery = sQuery & "`VoidFlag` varchar(1) default 'N', "
+		sQuery = sQuery & "`ShipDate` datetime default NULL, "
+		sQuery = sQuery & "`ManifestDate` datetime default NULL, "
+		sQuery = sQuery & "`FuelSurcharge` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "`InsuranceAmount` decimal(8,0) default '0', "
+		sQuery = sQuery & "`InsuranceFee` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "`DiscountedDVFee` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "`OversizeFee` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "`BoxType` varchar(25) default NULL, "
+		sQuery = sQuery & "`Dimensions` varchar(20) default NULL, "
+		sQuery = sQuery & "`PackageType` varchar(25) default NULL, "
+		sQuery = sQuery & "`PaymentType` varchar(25) default NULL, "
+		sQuery = sQuery & "`Department` varchar(25) default NULL, "
+		sQuery = sQuery & "`ConsigneeEmail1` varchar(50) default NULL, "
+		sQuery = sQuery & "`Email1Mode` char(3) default NULL, "
+		sQuery = sQuery & "`ConsigneeEmail2` varchar(50) default NULL, "
+		sQuery = sQuery & "`Email2Mode` char(3) default NULL, "
+		sQuery = sQuery & "`ConsigneeEmail3` varchar(50) default NULL, "
+		sQuery = sQuery & "`Email3Mode` char(3) default NULL, "
+		sQuery = sQuery & "`ConsigneeEmail4` varchar(50) default NULL, "
+		sQuery = sQuery & "`Email4Mode` char(3) default NULL, "
+		sQuery = sQuery & "`ConsigneeEmail5` varchar(50) default NULL, "
+		sQuery = sQuery & "`Email5Mode` char(3) default NULL, "
+		sQuery = sQuery & "`PS_Commitmenttime` varchar(10) default NULL, "
+		sQuery = sQuery & "`CommitmentDeliveryDate` date default NULL, "
+		sQuery = sQuery & "`CommitmentDeliveryTime` varchar(10) default NULL, "
+		sQuery = sQuery & "`DeliveryDate` date default NULL, "
+		sQuery = sQuery & "`DeliveryTime` varchar(10) default NULL, "
+		sQuery = sQuery & "`AuditDateTime` datetime default NULL, "
+		sQuery = sQuery & "`ReceivedBy` varchar(25) default NULL, "
+		sQuery = sQuery & "`ReceivedLocation` varchar(50) default NULL, "
+		sQuery = sQuery & "`Bingo` varchar(1) default NULL, "
+		sQuery = sQuery & "`DeliveryLate` varchar(1) default NULL, "
+		sQuery = sQuery & "`DeliveryStatus` varchar(50) default NULL COMMENT 'Delivered, in-transit, exception, ', "
+		sQuery = sQuery & "`DeliveryComment` varchar(50) default NULL, "
+		sQuery = sQuery & "`WeekendHolidays` decimal(3,0) default NULL, "
+		sQuery = sQuery & "`TransitDays` decimal(3,0) default NULL, "
+		sQuery = sQuery & "`TPBAccountNumber` varchar(30) default NULL, "
+		sQuery = sQuery & "`TPBCompany` varchar(40) default NULL, "
+		sQuery = sQuery & "`TPBContact` varchar(40) default NULL, "
+		sQuery = sQuery & "`TPBAddress` varchar(40) default NULL, "
+		sQuery = sQuery & "`TPBAddress2` varchar(40) default NULL, "
+		sQuery = sQuery & "`TPBCity` varchar(25) default NULL, "
+		sQuery = sQuery & "`TPBState` varchar(20) default NULL, "
+		sQuery = sQuery & "`TPBZip` varchar(20) default NULL, "
+		sQuery = sQuery & "`TPBPhone` varchar(20) default NULL, "
+		sQuery = sQuery & "`HandlingFee` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "`PickupNumber` varchar(20) default NULL, "
+		sQuery = sQuery & "`UCC128` varchar(20) default NULL, "
+		sQuery = sQuery & "`CallTag` varchar(10) default NULL, "
+		sQuery = sQuery & "`MeterSerialNumber` varchar(20) default NULL, "
+		sQuery = sQuery & "`Ascending` decimal(12,3) default '0.000', "
+		sQuery = sQuery & "`Descending` decimal(12,3) default '0.000', "
+		sQuery = sQuery & "`ControlTotal` decimal(12,3) default '0.000', "
+		sQuery = sQuery & "`TotalCycleCount` decimal(12,0) default '0', "
+		sQuery = sQuery & "`MeterAmount` decimal(6,3) default '0.000', "
+		sQuery = sQuery & "`BatchCount` decimal(8,0) default '0', "
+		sQuery = sQuery & "`BatchTotal` decimal(12,3) default '0.000', "
+		sQuery = sQuery & "`BatchNumber` varchar(20) default NULL, "
+		sQuery = sQuery & "`BatchPieces` decimal(6,0) default '0', "
+		sQuery = sQuery & "`SwogFlag` varchar(1) default 'N', "
+		sQuery = sQuery & "`AddressValidated` varchar(1) default 'N', "
+		sQuery = sQuery & "`Interface` varchar(30) default NULL, "
+		sQuery = sQuery & "`ModifiedDate` timestamp NOT NULL default CURRENT_TIMESTAMP, "
+		sQuery = sQuery & "`Memo1` varchar(300) default NULL, "
+		sQuery = sQuery & "`Memo2` varchar(300) default NULL, "
+		sQuery = sQuery & "`Memo3` varchar(300) default NULL, "
+		sQuery = sQuery & "`UserText1` varchar(255) default NULL, "
+		sQuery = sQuery & "`UserText2` varchar(255) default NULL, "
+		sQuery = sQuery & "`UserText3` varchar(255) default NULL, "
+		sQuery = sQuery & "`UserText4` varchar(255) default NULL, "
+		sQuery = sQuery & "`UserText5` varchar(255) default NULL, "
+		sQuery = sQuery & "`UserNumber1` decimal(10,4) default NULL, "
+		sQuery = sQuery & "`UserNumber2` decimal(10,4) default NULL, "
+		sQuery = sQuery & "`UserNumber3` decimal(10,4) default NULL, "
+		sQuery = sQuery & "`UserNumber4` decimal(10,4) default NULL, "
+		sQuery = sQuery & "`UserNUmber5` decimal(10,4) default NULL, "
+		sQuery = sQuery & "`Imported` char(1) default 'N', "
+		sQuery = sQuery & "`SaturdayFlag` varchar(1) default 'N', "
+		sQuery = sQuery & "`HazardFlag` varchar(1) default 'N', "
+		sQuery = sQuery & "`HazardFee` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "PRIMARY KEY  (`id`), KEY `id_TrackingNumber` (`TrackingNumber`(20)), "
+		sQuery = sQuery & "KEY `index_TrackingNumber` (`TrackingNumber`(20))) "
+		sQuery = sQuery & "ENGINE=MyISAM AUTO_INCREMENT=55594 DEFAULT CHARSET=latin1 ROW_FORMAT=DYNAMIC; "
+	pCN.Execute(sQuery)
+	End If
+
+	'Codes empties recordset
+	Set rsTables = Nothing
+	
+End Function
+
+Function CreateCalendarTable(sQuery)
+	'==================================================================
+	' Function checks for exists of table Calendar in database CSTM. If table
+	' not found it is created.
+	'==================================================================
+	sQuery = ""
+	
+	Set rsTables = pcn.execute("show tables from cstm where tables_in_cstm = 'Calendar' ")
+	If rsTables.eof Then 
+		sQuery = "CREATE TABLE `calendar` ( "
+		sQuery = sQuery & "`date` date NOT NULL, "
+  		sQuery = sQuery & "`is_weekday` tinyint(4) NOT NULL, "
+  		sQuery = sQuery & "`is_holiday` tinyint(4) NOT NULL, "
+  		sQuery = sQuery & "`year` int(11) default NULL, "
+  		sQuery = sQuery & "`fiscal_year` tinyint(4) default NULL, "
+  		sQuery = sQuery & "`quarter` tinyint(4) default NULL, "
+  		sQuery = sQuery & "`month` tinyint(4) default NULL, "
+  		sQuery = sQuery & "`day` tinyint(4) default NULL, "
+  		sQuery = sQuery & "`day_of_week` tinyint(4) default NULL, "
+  		sQuery = sQuery & "`month_name` varchar(20) default NULL, "
+  		sQuery = sQuery & "`day_name` varchar(20) default NULL, "
+  		sQuery = sQuery & "`week` tinyint(4) default NULL, "
+  		sQuery = sQuery & "PRIMARY KEY  (`date`)) ENGINE=MyISAM DEFAULT CHARSET=latin1;"
+	pCN.Execute(sQuery)
+	End If
+	
+	'Codes empties recordset
+	Set rsTables = Nothing
+	
+End Function
+
+Function CreateLTLCarrierTable(sQuery)
+	'==================================================================
+	' Function checks for exists of table LTLCarrier in database CSTM. If table
+	' not found it is created. 
+	'==================================================================
+	sQuery = ""
+	
+	Set rsTables = pCN.execute("show tables from cstm WHERE TABLES_IN_CSTM = 'LTLCarrier'")
+	If rsTables.eof Then
+		sQuery = "CREATE TABLE `LTLCarrier` ( "
+		sQuery = sQuery & "`WarehouseCode` varchar(20) NOT NULL, "
+		sQuery = sQuery & "`LTLCarrierCode` varchar(50) NOT NULL, "
+		sQuery = sQuery & "`LTLCarrierDescription` varchar(50) default NULL, "
+		sQuery = sQuery & "`MinimumTrackingNumber` varchar(20) default NULL, "
+		sQuery = sQuery & "`CurrentTrackingNumber` varchar(20) default NULL, "
+		sQuery = sQuery & "`MaximumTrackingNumber` varchar(20) default NULL, "
+		sQuery = sQuery & "`CheckDigitType` varchar(20) default NULL, "
+		sQuery = sQuery & "PRIMARY KEY  (`LTLCarrierCode`)) ENGINE=MyISAM DEFAULT CHARSET=latin1;"
+		
+		On Error Resume Next
+		pCN.Execute(sQuery)
+
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.CreateLTLCarrierTable"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If
+	End If
+	
+	'Codes empties recordset
+	Set rsTables = Nothing
+	
+End Function
+
+Function CreateLTLCommodityTable(sQuery)
+	'==================================================================
+	' Function checks for existance of table LTLCommodity in database CSTM. If table
+	' not found it is created. 
+	'==================================================================
+	sQuery = ""
+
+	Set rsTables = pCN.execute("show tables from cstm WHERE TABLES_IN_CSTM = 'LTLCommodity'")
+	If rsTables.eof Then
+		sQuery = "CREATE TABLE `LTLCommodity` ( "
+		sQuery = sQuery & "`ID` int(9) NOT NULL auto_increment, "
+		sQuery = sQuery & "`CommodityClass` varchar(20) default NULL, "
+		sQuery = sQuery & "`CommodityDescription` varchar(30) default NULL, "
+		sQuery = sQuery & "`NMFC` varchar(20) default NULL, "
+		sQuery = sQuery & "`DefaultCommodityCode` varchar(1) default 'N' COMMENT 'Y = Default', "
+		sQuery = sQuery & "PRIMARY KEY  (`ID`)) ENGINE=MyISAM DEFAULT CHARSET=latin1;"
+		
+		On Error Resume Next
+		pCN.Execute(sQuery)
+
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.CreateLTLCommodityTable"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If
+	End If
+	
+	'Codes empties recordset
+	Set rsTables = Nothing
+	
+End Function
+
+Function CreateShipperLocationsTable(sQuery)
+	'==================================================================
+	' Function checks for exists of table ShipperLacations in database CSTM. If table
+	' not found it is created.
+	'==================================================================
+	sQuery = ""
+	
+	Set rsTables = pCN.execute("show tables from cstm WHERE TABLES_IN_CSTM = 'Shipperlocations'")
+	If rsTables.eof Then
+		sQuery = "CREATE TABLE `shipperlocations` (`Shipper` varchar(20) NOT NULL, PRIMARY KEY  (`Shipper`)) "
+		sQuery = sQuery & "ENGINE=MyISAM DEFAULT CHARSet=latin1 "
+		pCN.Execute(sQuery)
+	End If
+	
+	'Codes empties recordset
+	Set rsTables = Nothing
+	
+End Function
+
+Function CreateShipViaTable(sQuery)
+	'==================================================================
+	' Function checks for exists of table ShipVia in database CSTM. If table
+	' not found it is created.
+	'==================================================================
+	sQuery = ""
+	
+	Set rsTables = pCN.execute("show tables from cstm WHERE TABLES_IN_CSTM = 'shipvia'")
+	If rsTables.eof Then
+		sQuery = "CREATE TABLE `shipvia` ( "
+		sQuery = sQuery & "`Id` int(11) NOT NULL auto_increment, "
+  		sQuery = sQuery & "`CustomerShipMethod` varchar(25) NOT NULL, "
+  		sQuery = sQuery & "`ProShipDescription` varchar(50) default NULL, "
+  		sQuery = sQuery & "`ProShipShipMethod` varchar(50) NOT NULL, "
+  		sQuery = sQuery & "`PaymentType` varchar(50) default 'SHIPPER' COMMENT 'SHIPPER', "
+  		sQuery = sQuery & "`CODFlag` varchar(1) default 'N' COMMENT '(Y/N)', "
+  		sQuery = sQuery & "`ResidentialFlag` varchar(1) default 'N' COMMENT '(Y/N)', "
+  		sQuery = sQuery & "`SaturdayDeliveryFlag` varchar(1) default 'N' COMMENT '(Y/N)', "
+  		sQuery = sQuery & "PRIMARY KEY  (`Id`)) ENGINE=MyISAM AUTO_INCREMENT=155 DEFAULT CHARSET=latin1; "
+		pCN.Execute(sQuery)
+	End If	
+	
+	'Codes empties recordset
+	Set rsTables = Nothing
+	
+End Function
+
+Function CreateTransactionLogTable(sQuery)
+	'==================================================================
+	' Function checks for exists of table TransactionLog in database CSTM. If table
+	' not found it is created.
+	'==================================================================
+	sQuery = ""
+	
+	Set rsTables = pCN.execute("show tables from cstm WHERE TABLES_IN_CSTM = 'transactionlog'")
+	If rsTables.eof Then
+		sQuery = "CREATE TABLE `transactionlog` (`id` int(4) NOT NULL auto_increment, "
+		sQuery = sQuery & "`TransactionDateTime` timestamp NOT NULL default CURRENT_TIMESTAMP on update CURRENT_TIMESTAMP,"
+		sQuery = sQuery & "`ShipmentID` varchar(20) default NULL, "
+		sQuery = sQuery & "`FunctionName` varchar(50) default NULL, "
+		sQuery = sQuery & "`Message` varchar(255) default NULL, "
+		sQuery = sQuery & "`SqlText` mediumtext,"
+		sQuery = sQuery & "`Shipper` varchar(20) default NULL, "
+		sQuery = sQuery & "`User` varchar(20) default NULL, "
+		sQuery = sQuery & "`StationName` varchar(20) default NULL, "
+		sQuery = sQuery & "PRIMARY KEY  (`id`)) ENGINE=MyISAM AUTO_INCREMENT=6 DEFAULT CHARSet=latin1; "
+		pCN.Execute(sQuery)
+	End If
+	
+	'Codes empties recordset
+	Set rsTables = Nothing
+	
+End Function
+
+Function CreateUserTable(sQuery)
+	'==================================================================
+	' Function checks for exists of table UserTable in database CSTM. If table
+	' not found it is created.
+	'==================================================================
+	sQuery = ""
+	
+	Set rsTables = pCN.execute("show tables from cstm WHERE TABLES_IN_CSTM = 'usertable'")
+	If rsTables.eof Then
+		sQuery = "CREATE TABLE `usertable` ( "
+		sQuery = sQuery & "`id` int(11) NOT NULL auto_increment, "
+  		sQuery = sQuery & "`UserId` varchar(10) NOT NULL, "
+  		sQuery = sQuery & "`UserPassword` varchar(40) default NULL, "
+  		sQuery = sQuery & "`UserName` varchar(40) NOT NULL, "
+  		sQuery = sQuery & "`DefaultShipper` varchar(15) default NULL COMMENT 'Default Shiment location', "
+  		sQuery = sQuery & "`DataBaseName` varchar(20) default NULL COMMENT 'Name of Database', "
+  		sQuery = sQuery & "`DataBaseUserId` varchar(20) default NULL, "
+  		sQuery = sQuery & "`DataBasePassword` varchar(20) default NULL, "
+  		sQuery = sQuery & "`Supervisor` varchar(1) default 'N' COMMENT '(Y/N)', "
+  		sQuery = sQuery & "`ShippingOperator` varchar(1) default 'Y' COMMENT '(Y/N)', "
+  		sQuery = sQuery & "`Picker` varchar(1) default 'N' COMMENT '(Y/N)', "
+  		sQuery = sQuery & "`Packer` varchar(1) default 'N' COMMENT '(Y/N)', "
+  		sQuery = sQuery & "`Active` varchar(1) default 'Y' COMMENT '(Y/N)', "
+  		sQuery = sQuery & "`InactiveDate` date default NULL, "
+  		sQuery = sQuery & "`CreatedDate` datetime default NULL COMMENT 'Date Record is created', "
+  		sQuery = sQuery & "`Comments` varchar(100) default NULL, "
+  		sQuery = sQuery & "PRIMARY KEY  (`id`)) ENGINE=MyISAM AUTO_INCREMENT=19 DEFAULT CHARSET=latin1 ROW_FORMAT=DYNAMIC; "
+		pCN.Execute(sQuery)
+	End If	
+	
+	'Codes empties recordset
+	Set rsTables = Nothing
+	
+End Function
+
+Function CreateWarehouseTable(sQuery)
+	'==================================================================
+	' Function checks for exists of table WarehouseTable in database CSTM. 
+	' If table not found it is created.
+	'==================================================================
+	sQuery = ""
+	
+	Set rsTables = pCN.execute("show tables from cstm WHERE TABLES_IN_CSTM = 'Warehouse'")
+	If rsTables.eof Then
+		sQuery = "CREATE TABLE `warehouse` ( "
+		sQuery = sQuery & "`Warehouse Code` char(20) NOT NULL default '', "
+		sQuery = sQuery & "`Warehouse Name` char(50) default NULL, "
+		sQuery = sQuery & "`CustomsDescription` char(50) default NULL, "
+		sQuery = sQuery & "`BOLDescription` char(50) default NULL, "
+		sQuery = sQuery & "`UCC128Holder` char(30) default NULL, "
+		sQuery = sQuery & "`EINNumber` char(20) default NULL, "
+		sQuery = sQuery & "`OutPutFileLocation` char(100) default NULL, "
+		sQuery = sQuery & "`OutputLaunchFileLocation` char(100) default NULL, "
+		sQuery = sQuery & "`InPutFileLocation` char(100) default NULL, "
+		sQuery = sQuery & "`InputLaunchFileLocation` char(100) default NULL, "
+		sQuery = sQuery & "`PalletLabels` char(03) default NULL COMMENT 'Labels to print per pallet', "
+		sQuery = sQuery & "PRIMARY KEY  (`Warehouse Code`)) ENGINE=MyISAM DEFAULT CHARSET=latin1; "
+		
+		On Error Resume Next
+		pCN.Execute(sQuery)
+
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.CreateWarehouseTable"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If
+	End If	
+	
+	'Codes empties recordset
+	Set rsTables = Nothing
+	
+End Function
+
+Function AlterWarehouseTable()
+	'==================================================================
+	' Function checks for exists of fields that have beed added or modified in
+	' table Warehouse in database CSTM. Since going into production. 
+	' Updates table with field changes.
+	'==================================================================
+	
+	'Checks for field InPutFileLocation
+	Set rsFields = pcn.execute("show columns from Warehouse where field = 'InPutFileLocation'")
+	If rsFields.eof then
+		pcn.execute("alter table `cstm`.`Warehouse` add column `InputFileLocation` char (100) NULL")  
+	End If
+	
+	'Checks for field InPutLaunchFileLocation
+	Set rsFields = pcn.execute("show columns from Warehouse where field = 'InPutLaunchFileLocation'")
+	If rsFields.eof then
+		pcn.execute("alter table `cstm`.`Warehouse` add column `InputLaunchFileLocation` char (100) NULL")  
+	End If
+	
+	'Checks for field Labels to print per pallet
+	Set rsFields = pcn.execute("show columns from Warehouse where field = 'PalletLabels'")
+	If rsFields.eof then
+		pcn.execute("alter table `cstm`.`Warehouse` add column `PalletLabels` char (03) NULL COMMENT 'Labels per Pallet'")  
+	End If
+	
+End Function
+
+Function AlterHistory1Table()
+	'==================================================================
+	' Function checks for exists of fields that have beed added or modified in
+	' table History1 in database CSTM. Since going into production. Updates table
+	' with field changes.
+	'==================================================================
+	
+	'Checks for field SaturdayFlag
+	Set rsFields = pcn.execute("show columns from history1 where field = 'SaturdayFlag'")
+	If rsFields.eof then
+		pcn.execute("alter table `cstm`.`history1` add column `SaturdayFlag` varchar (1) DEFAULT 'N' NULL") 
+
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterHistory1Table"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If	
+	End If
+	
+	'Checks for field HazardFlag
+	Set rsFields = pcn.execute("show columns from history1 where field = 'HazardFlag'")
+	If rsFields.eof then
+		pcn.execute("alter table `cstm`.`history1` add column `HazardFlag` varchar (1) DEFAULT 'N' NULL") 
+
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterHistory1Table"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If			
+	End If
+	
+	'Checks for field UserText1
+	Set rsFields = pcn.execute("show columns from history1 where field = 'Usertext1'")
+	If rsFields.eof then
+		pcn.execute("alter table `cstm`.`history1` add column `Usertext1` varchar (255) NULL")
+
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterHistory1Table"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If			
+	End If
+	
+	'Checks for field UserText2
+	Set rsFields = pcn.execute("show columns from history1 where field = 'Usertext2'")
+	If rsFields.eof then
+		pcn.execute("alter table `cstm`.`history1` add column `Usertext2` varchar (255)  NULL")  
+		
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterHistory1Table"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If	
+	End If
+	
+	'Checks for field UserText3	
+	Set rsFields = pcn.execute("show columns from history1 where field = 'Usertext3'")
+	If rsFields.eof then
+		pcn.execute("alter table `cstm`.`history1` add column `Usertext3` varchar (255) NULL")
+
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterHistory1Table"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If			
+	End If
+	
+	'Checks for field UserText4
+	Set rsFields = pcn.execute("show columns from history1 where field = 'Usertext4'")
+	If rsFields.eof then
+		pcn.execute("alter table `cstm`.`history1` add column `Usertext4` varchar (255)  NULL")
+
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterHistory1Table"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If			
+	End If
+	
+	'Checks for field UserText5
+	Set rsFields = pcn.execute("show columns from history1 where field = 'Usertext5'")
+	If rsFields.eof then
+		pcn.execute("alter table `cstm`.`history1` add column `Usertext5` varchar (255)  NULL") 
+
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterHistory1Table"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If			
+	End If
+
+	'Changes size of field ConsigneeSate
+	Set rsFields = pcn.execute("show columns from history1 where field = 'ConsigneeState'")
+	If rsfields.fields("type") <> "varchar(20)" then 
+		sQuery = "alter table `cstm`.`history1` change `ConsigneeState` `ConsigneeState` varchar (20)  NULL"
+		pcn.execute(sQuery)
+		
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterHistory1Table"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If	
+	End If
+		
+	'Changes size of field TPBState
+	Set rsFields = pcn.execute("show columns from history1 where field = 'TPBState'")
+	If rsfields.fields("type") <> "varchar(20)" then 
+		sQuery = "alter table `cstm`.`history1` change `TPBState` `TPBState` varchar (20)  NULL"
+		pcn.execute(sQuery)
+		
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterHistory1Table"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If	
+	End If
+	
+	'Changes size of field TPBZip
+	Set rsFields = pcn.execute("show columns from history1 where field = 'TPBZip'")
+	If rsfields.fields("type") <> "varchar(20)" then 
+		sQuery = "alter table `cstm`.`history1` change `TPBZip` `TPBZip` varchar (20)  NULL"
+		pcn.execute(sQuery)
+		
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterHistory1Table"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If	
+	End If	
+	
+	'03-26-2009 - Changed size of field Consignee Phone from 20 Characters to 50 characters
+	Set rsFields = pcn.execute("show columns from history1 where field = 'ConsigneePhone'")
+	If rsfields.fields("type") <> "varchar(50)" then 
+		sQuery = "alter table `cstm`.`history1` change `ConsigneePhone` `ConsigneePhone` varchar (50)  NULL"
+		pcn.execute(sQuery)
+		
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterHistory1Table"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If	
+	End If	
+	
+	'Added 03-25-2010 - Check for field Hazard Fee
+	Set rsFields = pcn.execute("show columns from history1 where field = 'HazardFee'")
+	If rsfields.eof then 
+		sQuery = "alter table `cstm`.`history1` Add Column `HazardFee` Decimal(9,3)  Default '0.00'"
+		pcn.execute(sQuery)
+		
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterHistory1Table"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If		
+	End If	
+	
+	'Added 03-25-2010 - Check for field AdditionalTrackingNumber
+	Set rsFields = pcn.execute("show columns from history1 where field = 'AdditionalTrackingNumber'")
+	If rsfields.eof then 
+		sQuery = "alter table `cstm`.`history1` Add Column `AdditionalTrackingNumber` Varchar(30)  NULL"
+		pcn.execute(sQuery)
+		
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterHistory1Table"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If
+	End If	
+	
+	'Added 05-30-2012 - Check for field LPNNumber
+	Set rsFields = pcn.execute("show columns from history1 where field = 'LPNNumber'")
+	If rsfields.eof then 
+		sQuery = "alter table `cstm`.`history1` Add Column `LPNNumber` Varchar(9)  NULL"
+		pcn.execute(sQuery)
+		
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterHistory1Table"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If
+	End If	
+	
+	'Added 05-30-2012 - Check for field ExpectedPackageWeight
+	Set rsFields = pcn.execute("show columns from history1 where field = 'ExpectedPackageWeight'")
+	If rsfields.eof then 
+		sQuery = "alter table `cstm`.`history1` Add Column `ExpectedPackageWeight` Decimal(10,4)  Default '0.0000'"
+		pcn.execute(sQuery)
+		
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterHistory1Table"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If
+	End If	
+	
+	'Added 05-30-2012 - Check for field WeightVarianceOverRide
+	Set rsFields = pcn.execute("show columns from history1 where field = 'WeightVarianceOverRide'")
+	If rsfields.eof then 
+		sQuery = "alter table `cstm`.`history1` Add Column `WeightVarianceOverRide` VarChar(1)  default 'N' COMMENT 'Supervisor Override (Y or N)'"
+		pcn.execute(sQuery)
+		
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating datbase
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterHistory1Table"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If
+	End If	
+
+End Function
+
+Function CreateHistory1Table(sQuery)
+	'==================================================================
+	' Function checks for exists of table History1 in database CSTM. If table
+	' not found it is created.
+	'==================================================================
+	sQuery = ""
+	
+	Set rsTables = pCN.execute("show tables from cstm WHERE TABLES_IN_CSTM = 'History1'")
+	If rsTables.eof Then	
+		sQuery = "CREATE TABLE `history` ( "
+		sQuery = sQuery & "`id` int(11) NOT NULL auto_increment, "
+		sQuery = sQuery & " `PackageID` varchar(30) default NULL, "
+		sQuery = sQuery & "`InvoiceNumber` varchar(30) default NULL, "
+		sQuery = sQuery & "`Shipper` varchar(15) default NULL, "
+		sQuery = sQuery & "`OriginZip` varchar(10) default NULL, "
+		sQuery = sQuery & "`ConsigneeNumber` varchar(20) default NULL COMMENT 'ShipTo', "
+		sQuery = sQuery & "`ConsigneeContact` varchar(50) default NULL, "
+		sQuery = sQuery & "`ConsigneeCompany` varchar(50) default NULL, "
+		sQuery = sQuery & "`ConsigneeAddress1` varchar(50) default NULL, "
+		sQuery = sQuery & "`ConsigneeAddress2` varchar(50) default NULL, "
+		sQuery = sQuery & "`ConsigneeAddress3` varchar(50) default NULL, "
+		sQuery = sQuery & "`ConsigneeCity` varchar(50) default NULL, "
+		sQuery = sQuery & "`ConsigneeState` varchar(20) default NULL, "
+		sQuery = sQuery & "`ConsigneeZip` varchar(15) default NULL, "
+		sQuery = sQuery & "`ConsigneePhone` varchar(20) default NULL, "
+		sQuery = sQuery & "`ConsigneeBillTo` varchar(15) default NULL COMMENT 'BillTo', "
+		sQuery = sQuery & "`Residential` varchar(1) default 'N', "
+		sQuery = sQuery & "`Zone` varchar(10) default NULL, "
+		sQuery = sQuery & "`CountryCode` varchar(25) default NULL, "
+		sQuery = sQuery & "`ProshipCarrier` varchar(30) default NULL, "
+		sQuery = sQuery & "`CustomerShipMethodIn` varchar(20) default NULL COMMENT 'Inbound', "
+		sQuery = sQuery & "`CustomerShipMethodOut` varchar(20) default NULL, "
+		sQuery = sQuery & "`OriginCompany` varchar(50) default NULL, "
+		sQuery = sQuery & "`Carrier` varchar(25) default NULL, "
+		sQuery = sQuery & "`Class` varchar(30) default NULL, "
+		sQuery = sQuery & "`Operator` varchar(30) default NULL, "
+		sQuery = sQuery & "`Picker` varchar(30) default NULL, "
+		sQuery = sQuery & "`Packer` varchar(30) default NULL, "
+		sQuery = sQuery & "`BilledWeight` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "`ActualWeight` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "`CodAmount` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "`CodFee` decimal(10,2) default '0.00', "
+		sQuery = sQuery & "`CODPaymentMethod` varchar(10) default NULL, "
+		sQuery = sQuery & "`BaseCharge` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "`TotalCharge` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "`ListRate` decimal(10,3) default '0.000' COMMENT 'Used for Fedex Server', "
+		sQuery = sQuery & "`Discount` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "`AddlHandlingFee` decimal(10,3) default '0.000' COMMENT 'book rate of addl fees', "
+		sQuery = sQuery & "`ExtendedAreaFee` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "`Special` decimal(10,3) default '0.000' COMMENT 'List of all fees and charges', "
+		sQuery = sQuery & "`MiscTxt1` varchar(40) default NULL, "
+		sQuery = sQuery & "`CurBox` decimal(4,0) default NULL, "
+		sQuery = sQuery & "`MaxBox` decimal(4,0) default NULL, "
+		sQuery = sQuery & "`PONumber` varchar(50) default NULL, "
+		sQuery = sQuery & "`PLDReference1` varchar(50) default NULL, "
+		sQuery = sQuery & "`PLDReference2` varchar(50) default NULL, "
+		sQuery = sQuery & "`PSVoidID` varchar(50) default NULL, "
+		sQuery = sQuery & "`TrackingNumber` varchar(50) default NULL, "
+		sQuery = sQuery & "`VoidFlag` varchar(1) default 'N', "
+		sQuery = sQuery & "`ShipDate` datetime default NULL, "
+		sQuery = sQuery & "`ManifestDate` datetime default NULL, "
+		sQuery = sQuery & "`FuelSurcharge` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "`InsuranceAmount` decimal(8,0) default '0', "
+		sQuery = sQuery & "`InsuranceFee` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "`DiscountedDVFee` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "`OversizeFee` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "`BoxType` varchar(25) default NULL, "
+		sQuery = sQuery & "`Dimensions` varchar(20) default NULL, "
+		sQuery = sQuery & "`PackageType` varchar(25) default NULL, "
+		sQuery = sQuery & "`PaymentType` varchar(25) default NULL, "
+		sQuery = sQuery & "`Department` varchar(25) default NULL, "
+		sQuery = sQuery & "`ConsigneeEmail1` varchar(50) default NULL, "
+		sQuery = sQuery & "`Email1Mode` char(3) default NULL, "
+		sQuery = sQuery & "`ConsigneeEmail2` varchar(50) default NULL, "
+		sQuery = sQuery & "`Email2Mode` char(3) default NULL, "
+		sQuery = sQuery & "`ConsigneeEmail3` varchar(50) default NULL, "
+		sQuery = sQuery & "`Email3Mode` char(3) default NULL, "
+		sQuery = sQuery & "`ConsigneeEmail4` varchar(50) default NULL, "
+		sQuery = sQuery & "`Email4Mode` char(3) default NULL, "
+		sQuery = sQuery & "`ConsigneeEmail5` varchar(50) default NULL, "
+		sQuery = sQuery & "`Email5Mode` char(3) default NULL, "
+		sQuery = sQuery & "`PS_Commitmenttime` varchar(10) default NULL, "
+		sQuery = sQuery & "`CommitmentDeliveryDate` date default NULL, "
+		sQuery = sQuery & "`CommitmentDeliveryTime` varchar(10) default NULL, "
+		sQuery = sQuery & "`DeliveryDate` date default NULL, "
+		sQuery = sQuery & "`DeliveryTime` varchar(10) default NULL, "
+		sQuery = sQuery & "`AuditDateTime` datetime default NULL, "
+		sQuery = sQuery & "`ReceivedBy` varchar(25) default NULL, "
+		sQuery = sQuery & "`ReceivedLocation` varchar(50) default NULL, "
+		sQuery = sQuery & "`Bingo` varchar(1) default NULL, "
+		sQuery = sQuery & "`DeliveryLate` varchar(1) default NULL, "
+		sQuery = sQuery & "`DeliveryStatus` varchar(50) default NULL COMMENT 'Delivered, in-transit, exception, ', "
+		sQuery = sQuery & "`DeliveryComment` varchar(50) default NULL, "
+		sQuery = sQuery & "`WeekendHolidays` decimal(3,0) default NULL, "
+		sQuery = sQuery & "`TransitDays` decimal(3,0) default NULL, "
+		sQuery = sQuery & "`TPBAccountNumber` varchar(30) default NULL, "
+		sQuery = sQuery & "`TPBCompany` varchar(40) default NULL, "
+		sQuery = sQuery & "`TPBContact` varchar(40) default NULL, "
+		sQuery = sQuery & "`TPBAddress` varchar(40) default NULL, "
+		sQuery = sQuery & "`TPBAddress2` varchar(40) default NULL, "
+		sQuery = sQuery & "`TPBCity` varchar(25) default NULL, "
+		sQuery = sQuery & "`TPBState` varchar(20) default NULL, "
+		sQuery = sQuery & "`TPBZip` varchar(20) default NULL, "
+		sQuery = sQuery & "`TPBPhone` varchar(20) default NULL, "
+		sQuery = sQuery & "`HandlingFee` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "`PickupNumber` varchar(20) default NULL, "
+		sQuery = sQuery & "`UCC128` varchar(20) default NULL, "
+		sQuery = sQuery & "`CallTag` varchar(10) default NULL, "
+		sQuery = sQuery & "`MeterSerialNumber` varchar(20) default NULL, "
+		sQuery = sQuery & "`Ascending` decimal(12,3) default '0.000', "
+		sQuery = sQuery & "`Descending` decimal(12,3) default '0.000', "
+		sQuery = sQuery & "`ControlTotal` decimal(12,3) default '0.000', "
+		sQuery = sQuery & "`TotalCycleCount` decimal(12,0) default '0', "
+		sQuery = sQuery & "`MeterAmount` decimal(6,3) default '0.000', "
+		sQuery = sQuery & "`BatchCount` decimal(8,0) default '0', "
+		sQuery = sQuery & "`BatchTotal` decimal(12,3) default '0.000', "
+		sQuery = sQuery & "`BatchNumber` varchar(20) default NULL, "
+		sQuery = sQuery & "`BatchPieces` decimal(6,0) default '0', "
+		sQuery = sQuery & "`SwogFlag` varchar(1) default 'N', "
+		sQuery = sQuery & "`AddressValidated` varchar(1) default 'N', "
+		sQuery = sQuery & "`Interface` varchar(30) default NULL, "
+		sQuery = sQuery & "`ModifiedDate` timestamp NOT NULL default CURRENT_TIMESTAMP, "
+		sQuery = sQuery & "`Memo1` varchar(300) default NULL, "
+		sQuery = sQuery & "`Memo2` varchar(300) default NULL, "
+		sQuery = sQuery & "`Memo3` varchar(300) default NULL, "
+		sQuery = sQuery & "`UserText1` varchar(255) default NULL, "
+		sQuery = sQuery & "`UserText2` varchar(255) default NULL, "
+		sQuery = sQuery & "`UserText3` varchar(255) default NULL, "
+		sQuery = sQuery & "`UserText4` varchar(255) default NULL, "
+		sQuery = sQuery & "`UserText5` varchar(255) default NULL, "
+		sQuery = sQuery & "`UserNumber1` decimal(10,4) default NULL, "
+		sQuery = sQuery & "`UserNumber2` decimal(10,4) default NULL, "
+		sQuery = sQuery & "`UserNumber3` decimal(10,4) default NULL, "
+		sQuery = sQuery & "`UserNumber4` decimal(10,4) default NULL, "
+		sQuery = sQuery & "`UserNUmber5` decimal(10,4) default NULL, "
+		sQuery = sQuery & "`Imported` char(1) default 'N', "
+		sQuery = sQuery & "`SaturdayFlag` varchar(1) default 'N', "
+		sQuery = sQuery & "`HazardFlag` varchar(1) default 'N', "
+		sQuery = sQuery & "`HazardFee` decimal(10,3) default '0.000', "
+		sQuery = sQuery & "PRIMARY KEY  (`id`), KEY `id_TrackingNumber` (`TrackingNumber`(20)), "
+		sQuery = sQuery & "KEY `index_TrackingNumber` (`TrackingNumber`(20))) "
+		sQuery = sQuery & "ENGINE=MyISAM AUTO_INCREMENT=55594 DEFAULT CHARSET=latin1 ROW_FORMAT=DYNAMIC; "
+	pCN.Execute(sQuery)
+	End If
+
+	'Codes empties recordset
+	Set rsTables = Nothing
+	
+End Function
+
+Function CreateBatchInputTable(sQuery)
+	'==================================================================
+	' Function checks for existence of table Batch in database CSTM. If table
+	' not found it is created. 
+	'==================================================================
+	sQuery = ""
+
+	Set rsTables = pCN.execute("show tables from cstm WHERE TABLES_IN_CSTM = 'BatchInput'")
+	If rsTables.eof Then
+		sQuery = "CREATE TABLE `batchinput` ( "
+		sQuery = sQuery & "`ID` int(11) NOT NULL auto_increment, "
+		sQuery = sQuery & "`InvoiceID` varchar(20) default NULL, "
+		sQuery = sQuery & "`CustomerID` varchar(30) default NULL, "
+		sQuery = sQuery & "`CustomerName` varchar(30) default NULL, "
+		sQuery = sQuery & "`CustomerContact` varchar(30) default NULL, "
+		sQuery = sQuery & "`CustomerAddress1` varchar(30) default NULL, "
+		sQuery = sQuery & "`CustomerAddress2` varchar(30) default NULL, "
+		sQuery = sQuery & "`CustomerAddress3` varchar(30) default NULL, "
+		sQuery = sQuery & "`CustomerCity` varchar(30) default NULL, "
+		sQuery = sQuery & "`CustomerState` varchar(20) default NULL, "
+		sQuery = sQuery & "`CustomerZip` varchar(15) default NULL, "
+		sQuery = sQuery & "`CustomerCountry` varchar(30) default NULL, "
+		sQuery = sQuery & "`CustomerPhone` varchar(20) default NULL, "
+		sQuery = sQuery & "`CustomerShipMethod` varchar(25) default NULL, "
+		sQuery = sQuery & "`InvoiceType` varchar(30) default NULL, "
+		sQuery = sQuery & "`TotalSales` decimal(9,2) default NULL, "
+		sQuery = sQuery & "`CustomerCharge` decimal(9,2) default NULL, "
+		sQuery = sQuery & "`MiscText1` varchar(255) default NULL, "
+		sQuery = sQuery & "`MiscText2` varchar(255) default NULL, "
+		sQuery = sQuery & "`MiscText3` varchar(255) default NULL, "
+		sQuery = sQuery & "`MiscText4` varchar(255) default NULL, "
+		sQuery = sQuery & "`MiscText5` varchar(255) default NULL, "
+		sQuery = sQuery & "`ProcessedFlag` varchar(1) default 'N' COMMENT 'N = Not Shipped, Y = Shipped', "
+		sQuery = sQuery & "PRIMARY KEY  (`ID`)) ENGINE=MyISAM AUTO_INCREMENT=861 DEFAULT CHARSET=latin1;"
+		
+		
+		On Error Resume Next
+		pCN.Execute(sQuery)
+
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating database
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.CreateBatchTable"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If
+	End If
+
+	'Codes empties recordset
+	Set rsTables = Nothing
+	
+End Function
+
+Function AlterBatchInputTable()
+	'==================================================================
+	' Function checks for exists of fields that have been added or modified in
+	' table BatchInput in database CSTM. Since going into production. Updates table
+	' with field changes.
+	'==================================================================
+	
+	'Added 03-25-2010 - Checks for field CustomerCharge
+	Set rsFields = pcn.execute("show columns from BatchInput where field = 'CustomerCharge'")
+	If rsfields.eof then 
+		pcn.execute ("alter table `cstm`.`BatchInput` Add Column `CustomerCharge` decimal (9,2)  NULL")
+		
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating new field
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterBatchInputTable"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If		
+	End If
+	
+	'Added 09-16-2010 - Checks for field MiscText1
+	Set rsFields = pcn.execute("show columns from BatchInput where field = 'MiscText1'")
+	If rsfields.eof then 
+		pcn.execute ("alter table `cstm`.`BatchInput` Add Column `MiscText1` VarChar (255) NULL")
+		
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating new field
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterBatchInputTable"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If		
+	End If
+	
+	'Added 09-16-2010 - Checks for field MiscText2
+	Set rsFields = pcn.execute("show columns from BatchInput where field = 'MiscText2'")
+	If rsfields.eof then 
+		pcn.execute ("alter table `cstm`.`BatchInput` Add Column `MiscText2` VarChar (255) NULL")
+		
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating new field
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterBatchInputTable"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If		
+	End If
+	
+	'Added 09-16-2010 - Checks for field MiscText3
+	Set rsFields = pcn.execute("show columns from BatchInput where field = 'MiscText3'")
+	If rsfields.eof then 
+		pcn.execute ("alter table `cstm`.`BatchInput` Add Column `MiscText3` VarChar (255) NULL")
+		
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating new field
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterBatchInputTable"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If		
+	End If
+	
+	'Added 09-16-2010 - Checks for field MiscText4
+	Set rsFields = pcn.execute("show columns from BatchInput where field = 'MiscText4'")
+	If rsfields.eof then 
+		pcn.execute ("alter table `cstm`.`BatchInput` Add Column `MiscText4` VarChar (255) NULL")
+		
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating new field
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterBatchInputTable"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If		
+	End If
+	
+	'Added 09-16-2010 - Checks for field MiscText5
+	Set rsFields = pcn.execute("show columns from BatchInput where field = 'MiscText5'")
+	If rsfields.eof then 
+		pcn.execute ("alter table `cstm`.`BatchInput` Add Column `MiscText5` VarChar (255) NULL")
+		
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating new field
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.AlterBatchInputTable"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If		
+	End If
+	
+End Function
+
+Function CreateFeederAddressTable(sQuery)
+	'==================================================================
+	' Function checks for existence of table Batch in database CSTM. 
+	' If table not found it is created. 
+	'==================================================================
+	sQuery = ""
+
+	Set rsTables = pCN.execute("show tables from cstm WHERE TABLES_IN_CSTM = 'feeder_addresses'")
+	If rsTables.eof Then
+		sQuery = "CREATE TABLE `feeder_addresses` ("
+		sQuery = sQuery & " `CREATE_KEY` bigint(20) NOT NULL auto_increment, "
+		sQuery = sQuery & " `order_number` varchar(50) NOT NULL, "
+		sQuery = sQuery & " `company` varchar(100) default NULL, "
+		sQuery = sQuery & " `attention` varchar(100) default NULL, " 
+		sQuery = sQuery & " `address1` varchar(100) default NULL, "
+		sQuery = sQuery & " `address2` varchar(100) default NULL, "
+		sQuery = sQuery & " `address3` varchar(100) default NULL, "
+		sQuery = sQuery & " `city` varchar(50) default NULL, "
+		sQuery = sQuery & " `state` varchar(50) default NULL, "
+		sQuery = sQuery & " `zip` varchar(10) default NULL, "
+		sQuery = sQuery & " `country` varchar(100) default NULL, "
+		sQuery = sQuery & " `Misc_Reference_1` varchar(20) default NULL, "
+		sQuery = sQuery & " `time_stamp` timestamp NULL default CURRENT_TIMESTAMP, "
+		sQuery = sQuery & "PRIMARY KEY  (`CREATE_KEY`,`order_number`), "
+		sQuery = sQuery & "KEY `Order_Number` (`order_number`)) ENGINE=MyISAM AUTO_INCREMENT=64 DEFAULT CHARSET=latin1;"
+		
+		On Error Resume Next
+		pCN.Execute(sQuery)
+
+		If Err.Number <> 0 Then
+			'Code displays error number and error description if error when creating database
+			strErrorMessage = Err.Number & "  " & Err.Description 
+			strWindowName = "CMS_Validate.CreateFeedAddresssTable"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			
+			OkToContinue = False
+			Exit Function
+		End If
+	End If
+
+	'Codes empties record-set
+	Set rsTables = Nothing
+	
+End Function

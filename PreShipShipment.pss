@@ -1,0 +1,330 @@
+Function PreShipShipment()
+ 	'=========================================================================
+	' This subroutine runs prior to sending shipment to engine for manifesting.
+	'=========================================================================
+
+	'Setting Defaults
+	sErrorField = ""
+	sErrorMessage = ""
+	PreShipShipment = ""
+
+	If (instr(Shipment.E("SHIPMENT/SERVICE"), "BWTI_DHL.DHL.GND")>0 _
+		Or instr(Shipment.E("SHIPMENT/SERVICE"), "BWTI_USPS.USPS.PP")>0 _
+		Or instr(Shipment.E("SHIPMENT/SERVICE"), "BWTI_USPS.USPS.PM")>0 _
+		Or instr(Shipment.E("SHIPMENT/SERVICE"), "BWTI_USPS.USPS.MM")>0 _
+		Or instr(Shipment.E("SHIPMENT/SERVICE"), "ELS.USPS")>0) _
+		AND (s.tp>1 Or CNum(Shipment.E("//PIECE_TOTAL"))>1) Then
+		'get the x and y of the XofY
+		iXofXofY = CNum(Shipment.E("//PIECE_NUMBER"))
+		iYofXofY = CNum(Shipment.E("//PIECE_TOTAL"))
+		'Iterate the x in XofY
+		If iXofXofY = 0 Then
+			iXofXofY = 1
+			Shipment.E("/SHIPMENT/PACKAGE/PIECE_NUMBER") = 1
+		End If
+		'ensure there is a Y in XofY
+		If iYofXofY = 0 Then 
+			iYofXofY = 1
+			Shipment.E("/SHIPMENT/PACKAGE/PIECE_TOTAL") = 1
+		End If		
+		'Assure box number is realistic for true MP shipments
+		iPkgsThisShipment = Shipment.TP
+	    If iPkgsThisShipment > 1 Then
+			iPkgStartXCount = CNum(Shipment.E("//PACKAGE[1]/PIECE_NUMBER")) -1 
+			For X = 1 To iPkgsThisShipment
+				Shipment.E("//PACKAGE[" & X & "]/PIECE_NUMBER") = X + iPkgStartXCount 
+				Shipment.E("//PACKAGE[" & X & "]/PIECE_TOTAL") = iPkgsThisShipment
+				'we need to store the package related nodes
+				Set ndl0 = S.X.SelectSingleNode("/SHIPMENT/PACKAGE[" & X & "]")
+				If Not ndl0 Is Nothing Then
+					For Each nod0 In ndl0.childNodes	
+						SYS.UserGlobal("FAKEMPS/PACKAGE[" & X & "]/P/" & nod0.nodename) = nod0.text				
+					Next	
+					Set ndl0 = Nothing
+				Else
+					'this should never occur but we trap for it anyways
+					preshipshipment = "an error occurred reading the package xml information"
+					Exit Function
+				End If
+			Next
+			
+			Sys.E("/SYSTEM/GLOBALV/MULTIPIECE/IMAGE") = B64_Encode(Shipment.X.XML)	
+			iYofXofY = CNum(Shipment.E("//PIECE_TOTAL"))			
+		End If
+		'Save the DOM image for later use if MP and not last package.
+		If iYofXofY > 1 and (iXofXofY <> iYofXofY) Then
+			Sys.E("/SYSTEM/GLOBALV/MULTIPIECE/IMAGE") = B64_Encode(Shipment.X.XML)
+		End If
+		'Reset the package to piece 1 of 1 to allow manifest for DHL Ground MPS
+		If Shipment.TP > 1 OR Shipment.E("/SHIPMENT/PACKAGE/PIECE_NUMBER") > 1 Then
+			Shipment.MakeMultipiece(1)
+			Shipment.E("/SHIPMENT/PACKAGE/PACKAGING") = SYS.UserGlobal("FAKEMPS/PACKAGE[" & CNum(Shipment.E("/SHIPMENT/PACKAGE/PIECE_NUMBER")) & "]/P/PACKAGING")
+		End If		
+	End If			
+	
+	'Code rates ProShip system
+	Shipment.Rate
+	
+	'Code calls function that executes customer business rules before posting shipment
+	Call CustomerPreShipShipment(sErrorField, sErrorMessage)
+	
+	'Code displays error message. moves cursor to field on screen stops shipment
+	If Trim(sErrorField) <> "" _
+		Or Trim(sErrorMessage) <> "" Then
+		
+		'Code passes error message to ProShip warehouse
+		PreShipShipment = sErrorMessage
+		
+		'Code passes field that needs focus to ProShip warehouse
+		SetFocus sErrorField
+		
+		Exit Function
+	End If
+	
+	'Changed 03-15-2015 Code sets on Proof of Delivery when shipping USPS shipments with Endicia.
+	If Left(Trim(Shipment.E("/SHIPMENT/SERVICE")),8) = "ELS.USPS" _
+		And Shipment.E("/SHIPMENT/SERVICE") <> "ELS.USPS.FCSP" _
+		And Trim(S.E("/SHIPMENT/COMMON/CONSIGNEE_COUNTRY")) ="US" Then
+		Shipment.E("/SHIPMENT/PACKAGE/PROOF") = "True"
+
+	ElseIf Left(Trim(Shipment.E("/SHIPMENT/SERVICE")),8) = "ELS.USPS" _
+		And Shipment.E("/SHIPMENT/SERVICE") = "ELS.USPS.FCSP" _
+		And Shipment.E("/SHIPMENT/PACKAGE[1]/PACKAGING") = "PAK" _
+		And Trim(S.E("/SHIPMENT/COMMON/CONSIGNEE_COUNTRY")) ="US" Then
+		Shipment.E("/SHIPMENT/PACKAGE/PROOF") = "False"
+		
+	ElseIf Left(Trim(Shipment.E("/SHIPMENT/SERVICE")),8) = "ELS.USPS" _
+		And Shipment.E("/SHIPMENT/SERVICE") = "ELS.USPS.FCSP" _
+		And Shipment.E("/SHIPMENT/PACKAGE[1]/PACKAGING") = "CUSTOM" _
+		And Trim(S.E("/SHIPMENT/COMMON/CONSIGNEE_COUNTRY")) ="US" Then
+		Shipment.E("/SHIPMENT/PACKAGE/PROOF") = "True"
+	End If
+	
+	'07-31-2009 - Code checks to see if order number has changed since pressing F3. 
+	'If so display error message.
+	'If UCase(s.e("SHIPMENT/CMS/CSTM_INTERFACE")) = "SAP" Then
+	If UCase(s.e("SHIPMENT/CMS/CSTM_INTERFACE")) <> "MANUAL" Then
+		If Trim(s.e("SHIPMENT/CMS/CSTM_ORIGINAL_DELIVERYID")) <> Trim(s.e("SHIPMENT/COMMON/SHIPPER_REFERENCE")) Then
+			PreShipShipment = "Order Number has been changed since shipment was started" & vbcrlf & _
+							  "Please check Delivery ID"
+			strFieldFocus  = "/SHIPMENT/COMMON/SHIPPER_REFERENCE"
+			Exit Function
+		End If
+	End If	
+	
+	'Code checks that Picker and Packer field contains data. This code only runs if customer 
+	'has set field PickerPackerValidation to Y in GENERALSETUP table
+	If UCase(Sys.UserGlobal("UsePickerPackerValidation")) = "Y" Then
+		If Shipment.E("SHIPMENT/CMS/CSTM_PICKER") = "" Then
+			PreShipShipment = "Picker field on screen can't be empty" & vbcrlf & "Please enter in a valid Picker"
+			SetFocus "/SHIPMENT/CMS/CSTM_PICKER"
+			Exit Function
+		
+		ElseIf Shipment.E("SHIPMENT/CMS/CSTM_PACKER") = "" Then
+			PreShipShipment = "Packer field on screen can't be empty" & vbcrlf & "Please enter in a valid Packer"
+			SetFocus "/SHIPMENT/CMS/CSTM_PACKER"
+			Exit Function
+		End If
+	End If	
+	
+	'Code checks for existance of PO Box. If PO Box found and a UPS or FedEx shipment
+	'we displays error message and stops shipment.
+	If Left(Trim(s.e("SHIPMENT/SERVICE")),9) <> "BWTI_USPS" _
+		And Left(Trim(s.e("SHIPMENT/SERVICE")),16) <> "BWTI_UPS.UPS.SPP" _
+		And Left(Trim(s.e("SHIPMENT/SERVICE")),16) <> "BWTI_UPS.UPS.SPP" _
+		And Left(Trim(s.e("SHIPMENT/SERVICE")),11) <> "BWTI_UPS.MI" _
+		And Left(Trim(s.e("SHIPMENT/SERVICE")),14) <> "BWTI_UPS.UPS.B" _
+		And Left(Trim(s.e("SHIPMENT/SERVICE")),8) <> "ELS.USPS" _
+		And Left(Trim(s.e("SHIPMENT/SERVICE")),8) <> "BWTI_LTL" _
+		And Left(Trim(s.e("SHIPMENT/SERVICE")),6) <> "MR.LTL" _
+		And Left(Trim(s.e("SHIPMENT/SERVICE")),14) <> "BWTI_DHL.DHL.H" Then
+		
+		Consignee = UCase(Shipment.E("/SHIPMENT/COMMON/CONSIGNEE_ADDRESS1") & _
+		Shipment.E("/SHIPMENT/COMMON/CONSIGNEE_CONTACT") & _
+		Shipment.E("/SHIPMENT/COMMON/CONSIGNEE_COMPANY") & _
+		Shipment.E("/SHIPMENT/COMMON/CONSIGNEE_ADDRESS2"))
+		
+		If ((Instr(1,Consignee,"PO BOX") > 0 ) OR _
+		   (Instr(1,Consignee,"P O BOX") > 0 ) OR _
+		   (Instr(1,Consignee,"P.O. BOX") > 0 ) OR _
+		   (Instr(1,Consignee,"POB ") > 0 ) OR _
+		   (Instr(1,Consignee,"PO. BOX ") > 0 ) OR _
+		   (Instr(1,Consignee,"POST OFFICE B") > 0 ) OR _
+		   (Instr(1,Consignee,"POST OFFICE BOX") > 0 ) OR _
+		   (Instr(1,Consignee,"P.O.B.") > 0 ) _
+		   ) Then
+		
+		'Displays error message to operator and returns them back to shipping screen.
+		PreShipShipment = "Can't ship to a PO Box using this service" & vbcrlf & _
+						  "Select another Service or change Consignee Address"
+		SetFocus "/SHIPMENT/SERVICE"
+		Exit Function
+		End If
+	End If
+	
+	'Added 01/16/2013 - Code blanks out contact name field when shipping UPS Surepost And
+	'address1, address2, and contact fields oll contain data. This will make sure that both
+	'address fields will be printed in shipping label.
+	If Left(Trim(s.e("SHIPMENT/SERVICE")),15) = "BWTI_UPS.UPS.SP" _
+		And Trim(Shipment.E("/SHIPMENT/COMMON/CONSIGNEE_CONTACT")) <> "" _
+		And Trim(Shipment.E("/SHIPMENT/COMMON/CONSIGNEE_ADDRESS1")) <> "" _
+		And Trim(Shipment.E("/SHIPMENT/COMMON/CONSIGNEE_ADDRESS2")) <> "" Then
+		
+		Shipment.E("/SHIPMENT/COMMON/CONSIGNEE_CONTACT") = "" 
+	End If
+	
+	'Shipment.e("/SHIPMENT/COMMON/SP_ANC_ENDORSEMENT") = 2
+	
+	If UCase(s.e("SHIPMENT/CMS/CSTM_COD_FLAG")) = "Y" Then
+		iShipmentCODAmount = CNum(s.e("SHIPMENT/CMS/CSTM_COD_AMOUNT"))
+		CalculateCODLastPackage(iShipmentCODAmount)
+	End If
+			
+	'Code decides Package COD amount per package
+	REM If CNum(s.e("SHIPMENT/PACKAGE/COD_AMOUNT")) > O Then
+		REM Shipment.Rate
+		REM ShipmentCODAmount = CCur(s.e("SHIPMENT/PACKAGE/COD_AMOUNT")) + CCur(s.e("SHIPMENT/COMMON/TOTAL"))
+		REM PackageCODAmount = Round(ShipmentCODAmount / Shipment.TP,2)
+		
+		REM 'Loop that creates Package COD amount
+		REM For Package = 1 to Shipment.TP
+			REM 'Last package of multiple box shipment. plugs package COD amount 
+			REM 'with COD amount left.
+			REM If Package = Shipment.TP Then
+				REM PackageCODAmount = ShipmentCODAmount - RunningShipmentCODAmount
+			REM Else
+				REM RunningShipmentCODAmount = RunningShipmentCODAmount + PackageCODAmount
+			REM End If
+			
+			REM s.e("SHIPMENT/PACKAGE[" & Package & "]/COD_AMOUNT") = CStr(PackageCODAmount)
+		REM Next
+	REM End If
+		
+	'Code displays INTL screen for international shipments. 
+	If s.e("SHIPMENT/COMMON/CONSIGNEE_COUNTRY") <> "US" Then
+		If s.e("SHIPMENT/COMMON/SHIPPER") = "TRADE" _
+				And Trim(s.e("SHIPMENT/SERVICE")) <> "BWTI_LTL.LTL.FOWLER" Then
+			ShowForm "CI",True,True
+			ShowIntlSummaryScreen
+		End if
+		
+	If s.e("SHIPMENT/COMMON/SHIPPER") = "CONSUMER" _
+				And Trim(s.e("SHIPMENT/SERVICE")) <> "BWTI_LTL.LTL.CANADA" Then
+		ShowForm "CI",True,True
+		ShowIntlSummaryScreen
+		End if
+		
+		'Code sets field for number of commodity per package on manual shipment.
+		If UCase(Trim(s.e("SHIPMENT/CMS/CSTM_INTERFACE"))) = "MANUAL" Then
+			S.E("SHIPMENT/COMMON/INTERNATIONAL/LINE[1]/PKGS_WITH_COMMODITY") = 1
+		End If
+
+		'Code checks for shipment going to Canada and using FedEx. If so then
+		'we change Admissibility package type because of a problem in FedEx software.
+		If s.e("SHIPMENT/COMMON/CONSIGNEE_COUNTRY") = "CA" Then
+			If Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.CAFE.GND" _
+				Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.CAFE.HDL" _
+				Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.FXRS.PRI" _
+				Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.FXRS.STD" _
+				Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.FXRS.FOV" _
+				Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.FXRS.2DA" _
+				Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.FXRS.FOVI" _
+				Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.FXRS.PRII" _
+				Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.FXRS.2DAI" _
+				Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.FXRS.FR1I" _
+				Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.FXRS.IEF" _
+				Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.FXRS.FR1" Then
+				Shipment.E("//SHIPMENT/COMMON/ADMISSIBILITY_PACKAGE_TYPE") = "BOX"
+			End If
+		End If	
+
+		'Code build NAFTA declaration phrase that prints in Customs Invoice. If operator check box Print NAFTA declaration on International screen.
+		If s.e("SHIPMENT/CMS/INTERNATIONAL/CSTM_INTERNATIONAL_PRINT_NAFTA_DECLARATION") = "True" Then
+			s.e("SHIPMENT/CMS/INTERNATIONAL/CSTM_INTERNATIONAL_NAFTA_DECLARATION_LINE1") = "I hereby certify that the goods covered by this invoice " & _
+																						   "quality as an origination good for"
+			s.e("SHIPMENT/CMS/INTERNATIONAL/CSTM_INTERNATIONAL_NAFTA_DECLARATION_LINE2") = "the purpose of preferential Tariff Treatment under the NAFTA"
+		Else
+			s.e("SHIPMENT/CMS/INTERNATIONAL/CSTM_INTERNATIONAL_NAFTA_DECLARATION_LINE1") = ""
+			s.e("SHIPMENT/CMS/INTERNATIONAL/CSTM_INTERNATIONAL_NAFTA_DECLARATION_LINE2") = ""
+		End If
+	End If
+	
+	'Added - 01-21-2010 Code uses shipper reference as tracking number for all 
+	'MSI WorldWide Mail transactions. This code keeps Proship from displaying 
+	'error message that tracking number field is empty.
+	If s.e("SHIPMENT/SERVICE") = "BWTI_LTL.LTL.MSI" _
+		Or s.e("SHIPMENT/SERVICE") = "BWTI_LTL.LTL.GANDER" _
+		Or s.e("SHIPMENT/SERVICE") = "BWTI_LTL.LTL.ADDRESSLABEL" Then
+		S.E("SHIPMENT/PACKAGE[1]/TRACKING_NUMBER") = S.E("SHIPMENT/COMMON/SHIPPER_REFERENCE")
+	End If
+	
+	'Code displays BOL screen if shipment is LTL or manually LTL shipment
+	If Left(Trim(s.e("SHIPMENT/SERVICE")),8) = "BWTI_LTL" _
+		And Trim(s.e("SHIPMENT/SERVICE")) <> "BWTI_LTL.LTL.CANADA" _
+		And Trim(s.e("SHIPMENT/SERVICE")) <> "MR.LTL.WILLCALL" _
+		And Trim(s.e("SHIPMENT/SERVICE")) <> "BWTI_LTL.LTL.ADDRESSLABEL" _
+		And Trim(s.e("SHIPMENT/SERVICE")) <> "BWTI_LTL.LTL.GANDER" _
+		And Trim(s.e("SHIPMENT/SERVICE")) <> "BWTI_LTL.LTL.MSI" Then
+		
+		'Writes package weight to billed weight when shipping LTL or MR. so we pass back
+		'same field to customers system.
+		S.E("SHIPMENT/COMMON/BILLED_WEIGHT") = s.e("SHIPMENT/CMS/BOL/CSTM_BOL_TOTAL_WEIGHT") 
+		S.E("SHIPMENT/PACKAGE[1]/WEIGHT") = s.e("SHIPMENT/CMS/BOL/CSTM_BOL_TOTAL_WEIGHT") 
+		
+		'Updates Proship shipping charges with Freight charges from BOL screen.
+		s.e("SHIPMENT/COMMON/BASE") = s.e("SHIPMENT/CMS/BOL/CSTM_BOL_FREIGHT_CHARGE")
+		s.e("SHIPMENT/COMMON/TOTAL") = s.e("SHIPMENT/CMS/BOL/CSTM_BOL_FREIGHT_CHARGE")
+		s.e("SHIPMENT/COMMON/SPECIAL") = "0.00"	
+		s.e("SHIPMENT/COMMON/DISCOUNT") = "0.00"
+		
+		'Code checks for tracking number		
+		If s.e("SHIPMENT/PACKAGE/TRACKING_NUMBER") = "" Then
+			PreShipShipment = "Tracking number field can't be blank when shipping a Truck shipment"
+			Exit Function
+		End If
+		
+		'Added 03-03-2010 - Code calls function to parse out carrier and service from Proship service field.
+		'This function is called when you are not using a generic carrier on Bill of Lading Screen.This field 
+		'is used to print LTL carrier name on LTL pallet labels
+		If Trim(s.e("SHIPMENT/CMS/BOL/CSTM_BOL_CARRIER")) = "" Then
+			ProShipCarrier = s.e("SHIPMENT/SERVICE")
+			Call ParseCarrierAndService (ProShipCarrier, CarrierName, CarrierService)
+			s.e("SHIPMENT/CMS/BOL/CSTM_BOL_CARRIER") = Trim(CarrierService)
+		End If
+		
+		'Code calls function to find address is operator picked Freight Forwarder code from
+		'BOL Screen.
+		If Trim(S.E("SHIPMENT/CMS/BOL/CSTM_BOL_FREIGHT_FORWARDER_ID")) <> "" Then
+			Call LookupFreightForwarder()
+		End If
+		
+		'Code re-paints screen.
+		Sys.RefreshScreen
+		
+		'Code calls function to get shipped adress from System XML and Populates retuen address on BOL document.
+		CurrentShipper = Trim(s.e("SHIPMENT/COMMON/SHIPPER"))
+		Call FindShipperAddress(CurrentShipper)		
+		
+	End If
+	
+	'Code calls function that generates a UCC number for each Packge node when node CSTM_EDI_CUSTOMER is Y
+	If UCase(s.e("SHIPMENT/CMS/CSTM_EDI_CUSTOMER")) = "Y" Then
+		Call CreatePackageUCCNumberCustomer(strErrorMessage)
+		
+		If Trim(strErrorMessage) <> "" Then
+		
+			'Code passes error mssage to ProShip warehouse
+			PreShipShipment = strErrorMessage
+		End If
+	End If
+	
+	'Code saves ProShip commitment time to CMS node. Since UPS Ground Commitment time
+	'is set back to 3000 and PostShipShipment. We write 30000 to cstm_commitment_time
+	'if ProShip isn't creating a commitment time.
+	If S.E("SHIPMENT/PACKAGE/COMMITMENT_TIME") = "" Then
+		S.E("SHIPMENT/CMS/CSTM_COMMITMENT_TIME") = "30000"
+	Else
+		S.E("SHIPMENT/CMS/CSTM_COMMITMENT_TIME") = Trim(S.E("SHIPMENT/PACKAGE/COMMITMENT_TIME"))
+	End If
+	
+End Function

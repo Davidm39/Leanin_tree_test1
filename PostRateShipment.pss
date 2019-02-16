@@ -1,0 +1,19 @@
+Sub PostRateShipment()
+	'========================================================================
+	' Subroutine runs after ProShip rates box and before shipping screen appears
+	'========================================================================
+
+	'Code Corrects problem when FedEx Express server doesn't return dollar amount on
+	'Collect and third party shipments.
+	If Left(Trim(s.e("SHIPMENT/SERVICE")),14) = "BWTI_FXRS.FXRS" Then
+		If S.E("SHIPMENT/COMMON/TERMS") = "THIRD_PARTY" _
+			Or S.E("SHIPMENT/COMMON/TERMS") = "CONSIGNEE" Then
+
+			s.e("SHIPMENT/COMMON/TOTAL") = "0.00"
+			s.e("SHIPMENT/COMMON/BASE") = "0.00"
+			s.e("SHIPMENT/COMMON/SPECIAL") = "0.00"
+			s.e("SHIPMENT/COMMON/DISCOUNT") = "0.00"
+			Sys.RefreshScreen
+		End If
+	End If
+End Sub

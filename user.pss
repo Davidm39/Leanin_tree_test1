@@ -1,0 +1,123 @@
+Sub User(Index)
+	'======================================================================
+	' This subroutine runs subroutines based upon option operator picked from
+	' User Menu on Shipping screen.
+	'======================================================================
+	Select Case (Index)
+		Case 1
+			'Code starts Administration aspx web page -Made this for Office Reports
+			ProShipReports
+		Case 2
+			'Code starts History search aspx web page
+			SearchHistory
+		Case 3
+			'Code calls subroutine that starts ProShip Admin aspx web page
+			ProShipAdmin
+		Case 4
+			'Code calls subroutine that allows operator to change current ship date
+			FutureOnOff
+		Case 5
+			'Code calls subroutine that allows us to test code ideas..
+			TestCodeScript
+		Case 12
+			'Code calls subroutine to list out carrier services.
+			GetServices
+		Case 15
+			'Code calls function to import SAP File 
+			Call BatchSAPImportFile()			
+		Case 16
+			'Code calls function to process SAP batch files..
+			Call BatchSAPProcessFile()
+		Case 17
+			'Code calls subroutine that delete batch file.
+			Call BatchDeleteFile()
+		Case 18
+			'Code calls function to import customer file.
+			Call BatchCustomerImportFile()
+		Case 19
+			'Code calls function to process Customer batch files..
+			Call BatchCustomerProcessFile()
+		Case 20
+			'Code calls function to import mailroom file..
+			Call MailroomImportFile()
+		Case Else
+			MsgBox Index & " Not handled"
+	End Select
+End Sub
+
+Sub ProShipReports()
+	'=========================================================================
+	' This subroutine starts Administration asp page as default.
+	'=========================================================================
+	Launch_URL "http://10.1.0.180/pso/reports"
+End Sub
+
+Sub SearchHistory()
+	'=========================================================================
+	' This subroutine starts history search asp page as default.
+	'=========================================================================
+	Launch_URL "http://10.1.0.180/proship/search.aspx"
+End Sub
+
+Sub ProShipAdmin()
+	'=========================================================================
+	' This subroutine starts ProShip Admin ASP page.
+	'=========================================================================
+	Launch_URL "http://10.1.0.180/proship/index.aspx"
+End Sub
+
+Sub FutureOnOff()
+	'=========================================================================
+	' This subroutine pops up a screen allowing operator to change current ship date to
+	' a date into the future. This date change only affects shipping station that ran this
+	' subroutine.
+	'=========================================================================
+	DIM Futuredate
+	DIM Futureflag
+	Futuredate = Celse (now, "mm/dd/yyyy")
+
+	'... Prompt for Future Ship date, default to Today
+	Futuredate = BigInputBox("Enter the Future Date for Shipments", "Ship Date", Futuredate)
+	Sys.UserGlobal("FutureDate")= CDate(Futuredate)
+	'..Set Ship Date = Futuredate
+	s.e("//SHIPDATE") = Sys.UserGlobal("FutureDate")
+	'... Set Futureflag = TRUE if Futuredate <> Today
+	IF Futuredate <> Celse (now, "mm/dd/yyyy") Then
+		Futureflag = "Y"
+	Else
+		Futureflag = "N"
+	End If
+	Sys.UserGlobal("Futureflag")= Futureflag
+End Sub
+
+Sub GetServices()
+	'=========================================================================
+	' This subroutine creates an Excel Spreadsheet of carrier services that customer
+	' has been configured on their system. This subroutine is called from User menu
+	' on shipping screen.
+	'=========================================================================
+	Set ndlS = sys.dd.SelectNodes("//SERVICES/SERVICE")
+	serviceString = "NextShip Ship-Via,NextShip Ship-Via Description, Customers Ship-Via Name"
+	saveAsFile serviceString & vbCrlf & vbCrlf, "C:\Services.csv", true
+	For each nodS in ndlS
+		serviceString = nodS.SelectSingleNode("SYMBOL").text
+		'rem the following line out if you only want  symbols
+		Set nodP = nodS.SelectSingleNode("PLAINTEXT")
+		If not nodP is nothing Then
+			serviceString = serviceString & "," & nodP.text & "," 
+		Else
+			serviceString = serviceString & "No Description" & ","
+		End If 
+		saveAsFile serviceString & vbCrlf, "C:\Services.csv", true
+	Next
+End Sub
+
+Sub TestCodeScript()
+	'========================================================================
+	' This subroutine allows programmer to insert code below and test from ProShip
+	' warehouse shipping scree.
+	'========================================================================
+	
+	MsgBox FixStringField("David,Mc'alone")
+
+End Sub

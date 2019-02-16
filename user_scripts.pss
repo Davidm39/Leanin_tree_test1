@@ -1,0 +1,3672 @@
+Function CTrim(strIn, LenIn)
+	'=========================================================================
+	' This function removes illegal characters and trims any field that you pass to this
+	'=========================================================================
+    select case LenIn
+        case 0
+            strIn = Round(CNum(strIn)+0.00, 2)	
+            If Len(strIn) = 1 Then strIn = strIn & ".00"
+            Ctrim = strIn
+        case else
+            'Remove illegal chars
+            strIn = replace(strIn, "'", "`")
+            If Len(strIn)>LenIn Then
+                'the strin is too long truncate it and log
+                CTrim = left(strIn, LenIn)
+                SaveAsFile strIn & " truncated to " & left(strIn, LenIn) & vbCrLf, "c:\ctrim.log", True
+            Else
+                'do nothing
+                CTrim = strIn
+            End if
+    End Select
+End Function
+
+Sub FixStates()
+	'=========================================================================
+	' This subroutine removes any coutries code from state combo box when shipping
+	' a domesctic shipment.
+	'=========================================================================
+	countryCode = Shipment.E("/SHIPMENT/COMMON/CONSIGNEE_COUNTRY")
+	if len(countryCode) = 0 Then 
+		sys.e("/SYSTEM/SHIPMENT_MASTER/CONSIGNEE_STATE/ENUMPATH1") = "//STATEPROVINCES/STATEPROVINCE"
+	Else
+		sys.e("/SYSTEM/SHIPMENT_MASTER/CONSIGNEE_STATE/ENUMPATH1") = "//STATEPROVINCES/STATEPROVINCE[ISO='" & countryCode & "']"
+	ENd If
+	RefreshComboSource "MAIN", "/SHIPMENT/COMMON/CONSIGNEE_STATE"
+End Sub
+
+Function LPad(MyValue, MyPadChar, MyPadLength)
+	'=========================================================================
+	' This functions pads left a character field. You need to pass field to pad, pad character
+	' and number of padding characters.
+	'=========================================================================
+	If Len(MyValue) <= MyPadLength Then
+		LPad = string(MyPadLength - Len(MyValue),MyPadChar) & MyValue
+	Else
+		LPad = MyValue
+	End If
+End Function
+
+Function RPad(MyValue, MyPadChar, MyPadLength)
+	'=========================================================================
+	' This function pads right a character field. You need to pass field to pad,
+	' Pad chararter and what character you will use as padding character.
+	'=========================================================================
+	
+	If Len(MyValue) <= MyPadLength Then
+		RPad = MyValue & string(MyPadLength - Len(MyValue),MyPadChar)
+	Else
+		RPad = MyValue
+	End If
+End Function
+
+Function CreateUniquePkgID()
+	'=========================================================================
+	' This function creates an Unique Pkgid for each manual shipment that is missing
+	' delivery ID This field will be Shipper_reference in ProShip Format of this is field is
+	' YYYYMMDDHHMMSS.
+	'=========================================================================
+	
+	CurrentDate = celse(Date, "YYYYMMDD") 
+	
+	CurrentTime = CurrentTime & iif(len(hour(time()))<2, "0"& hour(time()), hour(time()))
+	CurrentTime = CurrentTime & iif(len(minute(time()))<2, "0"& minute(time()), minute(time()))
+	CurrentTime = CurrentTime & iif(len(second(time()))<2, "0"& second(time()), second(time()))
+	
+	s.e("SHIPMENT/COMMON/SHIPPER_REFERENCE") = CurrentDate & CurrentTime
+
+End Function
+
+Function ParseCarrierAndService(ProShipCarrier, CarrierName, CarrierService)
+	'=========================================================================
+	' This function will take ProShip carrier (BWTI_UPS.UPS.GND) example and 
+	' return actual carrier and service.
+	'=========================================================================
+
+	'Code finds "." contained in ProShipCarrier and length of field.
+	PeriodLocation = Instr(1,ProShipCarrier,".")
+	FieldLength = Len(Trim(ProShipCarrier))
+
+	'Extracts carrier and service from ProShip carrier name
+	CarrierAndService = Mid(ProShipCarrier,PeriodLocation + 1,FieldLength - PeriodLocation)
+	
+	'Code finds "." contained in Carrier and Service and length of field
+	FieldLength = Len(Trim(CarrierAndService))
+	PeriodLocation = Instr(1,CarrierAndService,"." )
+	
+	'Extracts actual carrier and service
+	CarrierName = mid(CarrierAndService,1,PeriodLocation - 1 )
+	CarrierService = Mid(CarrierAndService,PeriodLocation + 1,FieldLength - PeriodLocation)
+End Function
+
+Function DispVoid(KEY,Carrier)
+	'=========================================================================
+	' This functions marks the package as voided in the history menu. The Shipment 
+	' History Element property is read-only, so we need to access the DOM directly. 
+	' We will query for nodes with the appropriate SHIPID and change their "KEY" 
+	' attribute (which is whats used in the history window) to include a "-V-".
+	'=========================================================================
+	
+    IDs = Split(KEY," ")
+
+    For CT = Lbound(IDs) to UBound(IDs)
+		IDField = "TRACKING_NUMBER"
+		pkgID = IDs(ct)
+		
+		'Added 2016-10-21 - Code finds ! character in shipment to void. If character 
+		'found then removes everything from left of character that proship has prefixed 
+		'in front of tracking number
+		If Instr(1,pkgid,"!") Then
+			iExplantionCharacter = Instr(1,pkgID,"!")
+			pkgID = Mid(pkgID, iExplantionCharacter + 1, 50)
+		End If	
+   
+        'We assume that the operator voided ALL packages with the
+        ' ShipID (found in the SQL above).
+        Set Nz = S_History.Shipmentz.SelectNodes("/HISTORY/SHIPMENT[PACKAGE/" & IDField & "='" & pkgID &  "']")
+ 
+        For Each N in Nz
+            'Update the history window
+            Set N2 = N.Attributes.getNamedItem("KEY")
+            If Left(N2.Text,3) <> "-V-" Then
+                Kount = S_History.Shipmentz.SelectNodes("/HISTORY/SHIPMENT[starts-with(@KEY,'-V-" & N2.Text &  "')]").Length
+                If Kount > 0 Then
+                    N2.Text = "-V-" & N2.Text & "~" & Kount
+                Else
+                    N2.Text = "-V-" & N2.Text
+                End If
+            End If
+        Next
+        S_History.SyncHistoryWindow
+    Next
+End Function
+
+Function FormatDateTime(PackageDateTime)
+	'=========================================================================
+	' This function gets current ship date from ProShip. Gets current time from system
+	' clock. Puts these together into format (YYYY-MM-DD HH:MM:SS) to write back 
+	' to MySql database.
+	'=========================================================================
+	PackageDateTime = Celse(Shipment.E("SHIPMENT/COMMON/SHIPDATE"),"YYYY-MM-DD") 
+		
+	CurrentTime = CurrentTime & iif(len(hour(time()))<2, "0"& hour(time()), hour(time()))
+	CurrentTime = CurrentTime & iif(len(minute(time()))<2, "0"& minute(time()), minute(time()))
+	CurrentTime = CurrentTime & iif(len(second(time()))<2, "0"& second(time()), second(time()))
+		
+	PackageDateTime = PackageDatetime & " " & Mid(CurrentTime,1,2) & ":" & Mid(CurrentTime,3,2) & ":" & Mid(Currenttime,5,2)
+End Function
+
+Function FormatShipmentDateTime(PackageShipmentDate, PackageShipmentDateTime)
+	'=========================================================================
+	' This function gets current ship date from ProShip. Gets current time from system
+	' clock. Puts these together into format (YYYY-MM-DD HH:MM:SS) to write back 
+	' to MySql History Database.
+	'=========================================================================
+	CurrentTime = CurrentTime & iif(len(hour(time()))<2, "0"& hour(time()), hour(time()))
+	CurrentTime = CurrentTime & iif(len(minute(time()))<2, "0"& minute(time()), minute(time()))
+	CurrentTime = CurrentTime & iif(len(second(time()))<2, "0"& second(time()), second(time()))
+		
+	PackageShipmentDateTime = PackageShipmentDate & " " & Mid(CurrentTime,1,2) & ":" & Mid(CurrentTime,3,2) & ":" & Mid(Currenttime,5,2)
+End Function
+
+Function FormatManifestDateTime(PackageManifestDate, PackageManifestDateTime)
+	'=========================================================================
+	' This function gets current manifest date from ProShip. Gets current time from system
+	' clock. Puts these together into format (YYYY-MM-DD HH:MM:SS) to write back 
+	' to MySql History Database.
+	'=========================================================================
+	CurrentTime = CurrentTime & iif(len(hour(time()))<2, "0"& hour(time()), hour(time()))
+	CurrentTime = CurrentTime & iif(len(minute(time()))<2, "0"& minute(time()), minute(time()))
+	CurrentTime = CurrentTime & iif(len(second(time()))<2, "0"& second(time()), second(time()))
+		
+	PackageManifestDateTime = PackageManifestDate & " " & Mid(CurrentTime,1,2) & ":" & Mid(CurrentTime,3,2) & ":" & Mid(Currenttime,5,2)
+End Function
+
+Function FormatShippedTime(strPackageShipTime)
+	'=========================================================================
+	' This function gets current time from system clock. Puts time into format (HH:MM) 
+	' to write back a Database.
+	'=========================================================================
+	CurrentTime = CurrentTime & iif(len(hour(time()))<2, "0"& hour(time()), hour(time()))
+	CurrentTime = CurrentTime & iif(len(minute(time()))<2, "0"& minute(time()), minute(time()))
+		
+	strPackageShipTime = Mid(CurrentTime,1,2) & ":" & Mid(CurrentTime,3,2) 
+	
+End Function
+
+Function LogOn(UserID, Password)
+	'========================================================================
+	' This function validates user id and password from Usertable. If no match is
+	' found then we return error to function.
+	'========================================================================
+	
+	Select Case Trim(Sys.UserGlobal("UseUserTable"))
+		Case "0"
+			'Do nothing as customer isn't using User Logon Table
+		
+		Case "1"
+			'Code validates operator sign and password against CSTM(UserTable). Also starts connections to customer
+			'host databases.
+			Query = "SELECT UserID, DataBaseName, DefaultShipper, Mailroom FROM UserTable " & _
+					"WHERE UserID='" & UCase(UserID) & "' AND UserPassword='" & UCase(Password) & "'"
+
+			Set rsUserTable = pCN.execute(Query)
+
+			If rsUserTable.eof Then
+				'Displays error message if customer ship method not found in CSTM(Users) table
+				strErrorMessage = "User ID or Password Not correct" & vbCrLf & "Please try again"
+				strWindowName = "User_Scripts.Logon"
+				strWindowButtons = vbCritical + vbOkOnly
+				MsgBox strErrorMessage,strWindowButtons,strWindowName
+
+			Else
+				'Writes user id to a global field XML named SHIPPERID. 
+				Sys.UserGlobal("ShipperID") = Trim(rsUserTable.Fields("UserID").value)
+				Sys.UserGlobal("Warehouse") = Trim(rsUserTable.Fields("DefaultShipper").value)
+				Sys.UserGlobal("Mailroom") = Trim(rsUserTable.Fields("Mailroom").value)
+				Logon = True
+				
+			End If
+				
+			'Code empties record-set
+			Set rsUserTable = Nothing				
+		
+		Case "2"
+			'Code calls function to validate user log ons from customer supplied table
+			Call CustomerLogon(UserID, Password, OkToLogon)
+			
+			If OkToLogon = True Then
+				Logon = True
+			End If
+	End Select
+
+End Function
+
+Function TranslateShipMethod(ShipMethod, TranslateType)
+	'======================================================================
+	' This function gets called from LOADSHIPMENT.PSS and takes customer
+	' ship method and finds valid ProShip method Method. This function gets called 
+	' from PostShipShipment.PSS and takes customer  ProShip method and finds valid 
+	' Customer Ship Method.	
+	'======================================================================
+	If TranslateType = "InBound" then
+		
+		Query = "SELECT CustomerShipMethod, ProShipShipMethod, ProShipDescription, PaymentType, " & _
+				"PackagingType, CODFlag, ResidentialFlag, SaturdayDeliveryFlag " & _
+			    "FROM ShipVia WHERE CustomerShipMethod = '" & ShipMethod & "'"
+		
+		Set rsShipVia = pCN.Execute(Query)
+	
+		If rsShipVia.eof Then
+			'Code displays error message if record not found.
+			strErrorMessage = "Customer Ship Method (" & ShipMethod & ") Not Found in CSTM(ShipVia) Table."
+			strWindowName = "No Record Found - User_Scripts.TranslateShipMethod"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+		Else 		
+			'MsgBox rsShipVia.Fields("ProShipShipMethod").value 
+			s.e("SHIPMENT/SERVICE") = rsShipVia.Fields("ProShipShipMethod").value 
+			Sys.UserGlobal("CurrentShipMethod") = rsShipVia.Fields("ProShipShipMethod").value
+			s.e("SHIPMENT/CMS/CSTM_CUSTOMER_SHIPMETHOD_DESCRIPTION") = Trim(rsShipVia.Fields("ProShipDescription").value)
+			
+			'Code gets shipment TERMS from ShipVia table and sets ProShip
+			If rsShipVia.Fields("PaymentType").value <> "" Then
+				s.e("SHIPMENT/PACKAGE/TERMS") = Trim(rsShipVia.Fields("PaymentType").value)
+				s.e("SHIPMENT/COMMON/TERMS") = Trim(rsShipVia.Fields("PaymentType").value)
+			End If
+			
+			'Code Sets on Saturday Delivery Fee flag in ProShip.
+			If UCase(rsShipVia.Fields("SaturdayDeliveryFlag").value) = "Y" Then
+				s.e("SHIPMENT/COMMON/SATURDAY_DELIVERY") = "True"
+			End If
+			
+			'Code Sets on Residential flag in ProShip.
+			If UCase(rsShipVia.Fields("ResidentialFlag").value) = "Y" Then
+				s.e("SHIPMENT/COMMON/CONSIGNEE_RESIDENTIAL") = "True"
+			End If
+			
+			'Added 03-27-2015 - Code populates Proship packaging type field.
+			Shipment.E("/SHIPMENT/PACKAGE/PACKAGING") = Trim(rsShipVia.Fields("PackagingType").value)
+		End If
+
+	ElseIf TranslateType = "OutBound" then
+		ShipMethod = Shipment.E("SHIPMENT/SERVICE")
+	
+		If Shipment.E("SHIPMENT/SERVICE") = Sys.UserGlobal("CurrentShipMethod") Then
+			strShipMethod = s.e("SHIPMENT/CMS/CSTM_CUSTOMER_SHIPMETHOD_IN")
+			s.e("SHIPMENT/CMS/CSTM_CUSTOMER_SHIPMETHOD_OUT") = Trim(strShipMethod)
+		Else
+			Query = "SELECT CustomerShipMethod, ProShipShipMethod, ProShipDescription " & _
+					"FROM ShipVia WHERE ProShipShipMethod = '" & ShipMethod & "'"
+			
+			Set rsShipVia = pCN.Execute(Query)
+		
+			If rsShipVia.eof Then
+				'Code displays error message if record not foound.
+				strErrorMessage = "ProShip Ship Method (" & ShipMethod & ") Not Found in CSTM(ShipVia) Table."
+				strWindowName = "No Record Found - User_Scripts.TranslateShipMethod"
+				strWindowButtons = vbCritical + vbOkOnly
+				MsgBox strErrorMessage,strWindowButtons,strWindowName
+			Else		
+				strShipMethod = rsShipVia.Fields("CustomerShipMethod").value
+				s.e("SHIPMENT/CMS/CSTM_CUSTOMER_SHIPMETHOD_OUT") = Trim(strShipMethod)
+				s.e("SHIPMENT/CMS/CSTM_CUSTOMER_SHIPMETHOD_DESCRIPTION") = Trim(rsShipVia.Fields("ProShipDescription").value)
+			End If
+		End If
+	End If
+	
+	'Code empties RecordSet
+	Set rsShipVia = Nothing
+	
+End Function
+
+Function LookupBoxType(BoxType, CurrentBox)
+	'======================================================================
+	' This function gets called whenever Box Type field on shipping screens changes.
+	'======================================================================
+	
+	'Code gets current box count from ProShip.
+	CurrentBox = Shipment.CP
+	
+	'Code builds query yo lookup box type and find Dimensions
+	Query = "SELECT BoxType, BoxLength, BoxWidth, BoxHeight, BoxWeight " & _
+			"FROM BoxDimension WHERE BoxType = '" & BoxType & "'"
+	
+	Set rsBoxDimension = pCN.Execute(Query)
+	
+	If rsBoxDimension.eof Then
+		MsgBox "Box Type (" & BoxType & ") Not Found in Table Box Dimension." , vbExclamation + vbOkOnly, "File Lookup Error"
+	Else	
+		'Code looks for Box Dimensions to populate ProShip
+		If Trim(rsBoxDimension("BoxLength").value & "") <> ""  _
+			Or Trim(rsBoxDimension("BoxWidth").value & "") <> "" _
+			Or Trim(rsBoxDimension("BoxHeight").value & "") <> "" Then
+	
+			'Code looks for Box Dimensions to populate ProShip
+			s.e("SHIPMENT/PACKAGE[" & CurrentBox & "]/DIMENSION") = Trim(rsBoxDimension("BoxLength").value & "") & "x" & _
+											 Trim(rsBoxDimension("BoxWidth").value & "") & "x" & _
+											 Trim(rsBoxDimension("BoxHeight").value & "") 
+		Else
+			s.e("SHIPMENT/PACKAGE[" & CurrentBox & "]/DIMENSION") = ""	
+		End If
+
+		'Code populates package weight.
+		If CNum(rsBoxDimension("BoxWeight").value & "") > 0 Then
+			s.e("SHIPMENT/PACKAGE[" & CurrentBox & "]/WEIGHT") = CNum(rsBoxDimension("BoxWeight").value & "")
+		End If
+	End If
+	
+	'Code empties RecordSet
+	Set rsBoxDimension = Nothing
+	
+End Function
+
+Function BuildBoxTypeComboBox
+	'========================================================================
+	' This function reads through table BoxDimension and creates a combo box for
+	' screen field Box Type.
+	'========================================================================
+	'Remove any old Picker lists, if they exist
+	Set N = SYS.DD.SelectSingleNode("/SYSTEM/CSTM_BOXTYPE")
+	If Not N is Nothing then N.parentnode.removechild(N)
+	 
+	'Now loop and populate a new child node
+	Cnt=1
+	SET rsBoxDimension = pCN.Execute("SELECT BoxType,BoxDescription FROM BoxDimension ORDER BY BoxType")
+	Do While Not rsBoxDimension.EOF
+	
+		strBoxType = Trim(rsBoxDimension.Fields("BoxType")) & Space(02)
+		strBoxDesc = Space(02) & Trim(RsBoxDimension.Fields("BoxDescription"))
+		
+		SYS.E("/SYSTEM/CSTM_BOXTYPE[" & cnt & "]/PLAINTEXT") = strBoxDesc 
+		SYS.E("/SYSTEM/CSTM_BOXTYPE[" & cnt & "]/SYMBOL") = strBoxType
+		
+		Cnt = Cnt + 1
+		rsBoxDimension.MoveNext
+	Loop
+	
+	'Code empties recordset
+	Set rsBoxDimension = Nothing
+End Function
+
+Function BuildDepartmentComboBox
+	'========================================================================
+	' This function reads through table Department and creates a combo box for
+	' screen field Department.
+	'========================================================================
+	'Remove any old Picker lists, if they exist
+	Set N = SYS.DD.SelectSingleNode("/SYSTEM/CSTM_DEPARTMENT")
+	If Not N is Nothing then N.parentnode.removechild(N)
+	 
+	'Now loop and populate a new child node
+	Cnt=1
+	SET rsDepartment = pCN.Execute("SELECT DepartmentCode,DepartmentName FROM Department ORDER BY DepartmentCode")
+	Do While Not rsDepartment.EOF
+		SYS.E("/SYSTEM/CSTM_DEPARTMENT[" & cnt & "]/PLAINTEXT") = rsDepartment.Fields("DepartmentCode")
+		SYS.E("/SYSTEM/CSTM_DEPARTMENTNAME[" & cnt & "]/SYMBOL") = rsDepartment.Fields("DepartmentName")
+		Cnt = Cnt + 1
+		rsDepartment.MoveNext
+	Loop
+	
+	'Code empties recordset
+	Set rsDepartment = Nothing
+End Function
+
+Function FigureoutShipmentPaymentTerms(CarrierName, ShipmentBillingTerms)
+	'=========================================================================
+	' This functions gets called from PostShipShipment and figures out 
+	' currrent shipment terms that gets passed back to customer database and CSTM history
+	' table.
+	'========================================================================= 
+	'UPS Shipment
+	If Trim(CarrierName) = "UPS" _
+		Or Trim(CarrierName) = "MI" Then
+		
+		If Shipment.E("SHIPMENT/COMMON/TERMS") = "SHIPPER" Then
+			ShipmentBillingTerms = "PREPAID"
+		ElseIf Shipment.E("SHIPMENT/COMMON/TERMS") = "BR" Then
+			ShipmentBillingTerms = "BILL RECIPIENT"
+		ElseIf Shipment.E("SHIPMENT/COMMON/TERMS") = "THIRD_PARTY" Then
+			ShipmentBillingTerms = "BILL THIRD PARTY"
+		ElseIf Shipment.E("SHIPMENT/COMMON/TERMS") = "CONSIGNEE" Then
+			ShipmentBillingTerms = "CONSIGNEE"
+		ElseIf Shipment.E("SHIPMENT/COMMON/TERMS") = "DDP" Then
+			ShipmentBillingTerms = "DELIVERY DUTY PAID"
+		End If
+		
+	'DHL Shipment
+	ElseIf Trim(CarrierName) = "DHL" Then
+		If Shipment.E("SHIPMENT/COMMON/TERMS") = "SHIPPER" Then
+			ShipmentBillingTerms = "PREPAID"
+		ElseIf Shipment.E("SHIPMENT/COMMON/TERMS") = "THIRD_PARTY" Then
+			ShipmentBillingTerms = "BILL THIRD PARTY"
+		ElseIf Shipment.E("SHIPMENT/COMMON/TERMS") = "CONSIGNEE" Then
+			ShipmentBillingTerms = "CONSIGNEE"
+		End If
+		
+	'FedEx Express Shipment
+	ElseIf Trim(CarrierName) = "FXRS" Then
+		If Shipment.E("SHIPMENT/COMMON/TERMS") = "SHIPPER" Then
+			ShipmentBillingTerms = "PREPAID"
+		ElseIf Shipment.E("SHIPMENT/COMMON/TERMS") = "THIRD_PARTY" Then
+			ShipmentBillingTerms = "BILL THIRD PARTY"
+		ElseIf Shipment.E("SHIPMENT/COMMON/TERMS") = "CONSIGNEE" Then
+			ShipmentBillingTerms = "CONSIGNEE"
+		End If
+		
+	'FedEx Ground Shipment
+	ElseIf Trim(CarrierName) = "CAFE" Then
+		If Shipment.E("SHIPMENT/COMMON/TERMS") = "SHIPPER" Then
+			ShipmentBillingTerms = "PREPAID"
+		ElseIf Shipment.E("SHIPMENT/COMMON/TERMS") = "THIRD_PARTY" Then
+			ShipmentBillingTerms = "BILL THIRD PARTY"
+		ElseIf Shipment.E("SHIPMENT/COMMON/TERMS") = "CONSIGNEE" Then
+			ShipmentBillingTerms = "CONSIGNEE"
+		End If
+	
+	'USPS Shipment
+	ElseIf Trim(CarrierName) = "USPS" Then
+		If Shipment.E("SHIPMENT/COMMON/TERMS") = "SHIPPER" Then
+			ShipmentBillingTerms = "PREPAID"
+		Else
+			ShipmentBillingTerms = "PREPAID"
+		End IF
+	End If
+End Function
+
+Function FindOriginZip(CurrentShipper, OriginZip)
+	'========================================================================
+	' This subroutine reads System XML to find zip code that goes with Shipper
+	' being used.
+	'========================================================================
+	Set ndlS = sys.dd.SelectNodes("//SHIPPERS/SHIPPER")
+	Counter = 1
+
+	For each nodS in ndlS
+		ShipperString = nodS.SelectSingleNode("SYMBOL").text
+		
+		'Code gets shippers zip code from System XML File
+		If Trim(ShipperString) = CurrentShipper Then
+			OriginZip = Sys.E("//SHIPPERS/SHIPPER[" & Counter & "]/INFO/POSTALCODE")
+		End If
+
+		Counter = Counter + 1
+	Next
+End Function
+
+Function FormatDateTimeOracle(PackageDateTime)
+	'=========================================================================
+	' This function gets current ship date from ProShip. Puts these together into 
+	' format (MM-DD-YYYY) to write back to Oracle database.
+	'=========================================================================
+
+	Currenttime = ""
+	PackageDateTime = Celse(s.e("SHIPMENT/COMMON/SHIPDATE"),"YYYY/MM/DD") 
+	CurrentTime = CurrentTime & iif(len(hour(time()))<2, "0"& hour(time()), hour(time()))
+	CurrentTime = CurrentTime & iif(len(minute(time()))<2, "0"& minute(time()), minute(time()))
+	CurrentTime = CurrentTime & iif(len(second(time()))<2, "0"& second(time()), second(time()))
+	PackageDateTime = PackageDateTime & " " & Mid(CurrentTime,1,2) & ":" & Mid(CurrentTime,3,2) & ":" & Mid(Currenttime,5,2)
+
+End Function	
+
+Function ReadGeneralSetupTable
+	'========================================================================
+	' This function reads through table GeneralSetup and creates a global variables
+	' used to turn on/off of code.
+	'========================================================================
+	'Remove any old Departments from Combo box, if they exist
+	Set N = SYS.DD.SelectSingleNode("/SYSTEM/CSTM_DEPARTMENT")
+	If Not N is Nothing then N.parentnode.removechild(N)
+	
+	'Remove any old BoxType from Combo Box, if they exist
+	Set N = SYS.DD.SelectSingleNode("/SYSTEM/CSTM_BOXTYPE")
+	If Not N is Nothing then N.parentnode.removechild(N)
+	 
+	'Now loop and populate a new child node
+	Query = "SELECT UseBoxDimensionTable, UseDepartmentTable, UseShipViaTable, UseUserTable, " & _
+			"UseCustomerTable, PickerPackerValidation " & _
+			"FROM GeneralSetup"
+			
+	Set rsGeneralSetup = pCN.Execute(Query)
+	
+	If rsGeneralSetup.eof Then
+	
+	Else
+		'Populates Global Variables to be used while shipping.
+		Sys.UserGlobal("UseBoxDimensionTable") = rsGeneralSetup("UseBoxDimensionTable").value & ""
+		Sys.UserGlobal("UseDepartmentTable") = rsGeneralSetup("UseDepartmentTable").value & ""
+		Sys.UserGlobal("UseShipViaTable") = rsGeneralSetup("UseShipViaTable").value & ""		
+		Sys.UserGlobal("UseUserTable") = rsGeneralSetup("UseUserTable").value & ""
+		Sys.UserGlobal("UsePickerPackerValidation") = rsGeneralSetup("PickerPackerValidation").value & ""
+		Sys.UserGlobal("UseCustomerTable") = rsGeneralSetup("UseCustomerTable").value & ""
+	End If
+
+	'Code empties RecordSet
+	Set rsGeneralSetup = Nothing
+
+End Function
+
+Function CreatePackageUCCNumber()
+	'========================================================================
+	' This function gets current UCC128 number from CSTM(GeneralSetup) table. Increments
+	' number by 1 and writes back next number. Then calls function that calculates check
+	' digit and then updates ProShip PACKAGE node wthin UCC128 number.
+	'========================================================================
+
+	'Code reads through each ProShip package node and creates a 
+	'UCC128 number for each Package node. 
+	For Package = 1 to Shipment.TP
+		Query = "Select UCC128Holder From CSTM.GeneralSetup"
+
+		'Code saves Query string to local hard drive of UPDATE command
+		saveAsFile Query & vbCrLf, "c:\SQLCommand.txt", true	
+
+		Set rsGeneralSetup = pCN.Execute(Query,RecordsAffected)
+
+		If RecordsAffected < 1 Then
+			strErrorNumber = "Can't find record in CSTM(GeneralSetup) Table"  
+			strWindowName = "Pentax.CreateUCCNumber"
+			MsgBox strErrorNumber,vbExclamation + vbOkOnly,strWindowName
+			
+		Else
+			intNumber = rsGeneralSetup.Fields("UCC128Holder").value
+			
+			'Code emptioes recordset
+			set rsGeneralSetup = Nothing
+			
+			'Code adds 1 to current UCC Number
+			intNewUCCNumber = CNum(intNumber) + 1 
+			
+			'Puts back leading zeros in field
+			intNewUCCNumber = LPad(intNewUCCNumber,"0",19)
+			
+			'Codes updates CSTM(GeneralSetup) table with new UCC Number
+			SET rsGeneralSetup = pCN.Execute("UPDATE CSTM.GeneralSetup SET UCC128Holder = '" & intNewUCCNumber & "'")
+			
+			'Code calls function that figures out check digit for current UCC Number
+			Call Mod10Routine(intNumber, intCheckDigit)
+			
+			s.e("SHIPMENT/PACKAGE[" & package & "]/CSTM_UCC_NUMBER") = intNumber & intCheckDigit
+			s.e("SHIPMENT/PACKAGE[" & package & "]/CSTM_UCC_NUMBER_HUMAN_READABLE") = "(" & Mid(Trim(intNumber),1,2) & ")" & Mid(Trim(intNumber),3,17) & intCheckDigit
+			s.e("SHIPMENT/PACKAGE[" & package & "]/CSTM_UCC_NUMBER_HUMAN_READABLE1") = "(" & Mid(Trim(intNumber),1,2) & ")" & " " & Mid(Trim(intNumber),3,1) & " " & Mid(Trim(intNumber),4,7) & " " & Mid(Trim(intNumber),11,9) & " " & intCheckDigit
+		End If
+	Next
+	
+	'Code emptys recordset
+	Set rsGeneralSetup = Nothing
+
+End Function
+
+Function CreateMasterUCCNumber()
+	'========================================================================
+	' This function gets current UCC128 number from CSTM(GeneralSetup) table. Increments
+	' number by 1 and writes back next number. Then calls function that calculates check
+	' digit and then updates ProShip PACKAGE node wthin UCC128 number.
+	'========================================================================
+
+	'Code reads creates a Maaster UCC number and is written to 
+	'CMS/CSTM/MASTER_UCC_NUMBER
+	Query = "Select UCC128Holder From CSTM.GeneralSetup"
+
+	'Code saves Query string to local hard drive of UPDATE command
+	saveAsFile Query & vbCrLf, "c:\SQLCommand.txt", true	
+
+	Set rsGeneralSetup = pCN.Execute(Query,RecordsAffected)
+
+	If RecordsAffected < 1 Then
+		strErrorNumber = "Can't find record in CSTM(GeneralSetup) Table"  
+		strWindowName = "Pentax.CreateUCCNumber"
+		MsgBox strErrorNumber,vbExclamation + vbOkOnly,strWindowName
+		
+	Else
+		intNumber = rsGeneralSetup.Fields("UCC128Holder").value
+		
+		'Code emptioes recordset
+		set rsGeneralSetup = Nothing
+		
+		'Code adds 1 to current UCC Number
+		intNewUCCNumber = CNum(intNumber) + 1 
+		
+		'Puts back leading zeros in field
+		intNewUCCNumber = LPad(intNewUCCNumber,"0",19)
+		
+		'Codes updates CSTM(GeneralSetup) table with new UCC Number
+		SET rsGeneralSetup = pCN.Execute("UPDATE CSTM.GeneralSetup SET UCC128Holder = '" & intNewUCCNumber & "'")
+		
+		'Code calls function that figures out check digit for current UCC Number
+		Call Mod10Routine(intNumber, intCheckDigit)
+		
+		s.e("SHIPMENT/CMS/CSTM_MASTER_UCC_NUMBER") = intNumber & intCheckDigit
+	End If
+
+	'Code emptys recordset
+	Set rsGeneralSetup = Nothing
+
+End Function
+
+Function Mod10Routine(intNumber, intCheckDigit)
+	'========================================================================
+	' This code figures out check digit for MOD(10).
+	'========================================================================
+    
+    'Code creates a one dimensional array
+    Dim nDigits(30)
+	
+    'Determine Length of UCC number field
+    nLen = Len(intNumber)
+
+    'Now we need to store the string in reverse order into an array ignoring position 1
+    nCounter = 2
+    For nLoop = nLen To 1 Step -1
+        nDigits(nCounter) = CNum(Mid(intNumber, nLoop, 1))
+        nCounter = nCounter + 1
+    Next
+    
+    nLen = nCounter - 1
+ 
+    'Add Even postion Numbers together
+    nEven = 0
+    For nLoop = 2 To nLen Step 2
+        nEven = nEven + nDigits(nLoop)
+    Next
+ 
+    'Next Step
+    nMulti = nEven * 3
+    
+    'Add Odd position numbers together
+    nOdd = 0
+    For nLoop = 3 To nLen Step 2
+        nOdd = nOdd + nDigits(nLoop)
+    Next
+    
+    'Add
+    nAdd = nMulti + nOdd
+    
+    'Now Calc Digit
+    intCheckDigit = 10 - (nAdd Mod 10)
+
+    If intCheckDigit = 10 Then
+        intCheckDigit = 0
+    End If
+End Function
+
+Function CleanupAddress(strField)
+	'========================================================================
+	' This code looks at strfield. Converts ' or "" to space and passes back converted field
+	'========================================================================
+	
+	'If instr(strField,"'",1) > 0 Then
+	strField = Replace(strField, "'", " ")
+	'End If
+
+End Function
+
+Function BuildCustomerIDComboBox()
+	'========================================================================
+	' This function reads through CSTM(Customer) table and creates a combo box for
+	' screen field by Company ID.
+	'========================================================================
+	'Remove any old customerid lists, if they exist
+	Set N = SYS.DD.SelectSingleNode("/SYSTEM/CSTM_CUSTOMERID")
+	If Not N is Nothing then N.parentnode.removechild(N)
+	 
+	'Now loop and populate a new child node
+	Cnt=1
+	SET rsCustomer = pCN.Execute("SELECT CustomerID, CustomerName FROM Customer ORDER BY CustomerID")
+	Do While Not rsCustomer.EOF
+		strCustomerID = Mid(Trim(rsCustomer.Fields("CustomerID")),1,15) & Space(02)
+		strCustomerName = Trim(rsCustomer.Fields("CustomerName"))
+		
+		SYS.E("/SYSTEM/CSTM_CUSTOMERID[" & cnt & "]/PLAINTEXT") = strCustomerName
+		SYS.E("/SYSTEM/CSTM_CUSTOMERID[" & cnt & "]/SYMBOL") = strCustomerID
+		Cnt = Cnt + 1
+		rsCustomer.MoveNext
+	Loop
+	
+	'Code empties recordset
+	Set rsCustomer = Nothing
+
+End Function
+
+Function BuildCustomerNameComboBox()
+	'========================================================================
+	' This function reads through CSTM(Customer) table and creates a combo box for
+	' screen field Company ID.
+	'========================================================================
+	'Remove any old customerid lists, if they exist
+	Set N = SYS.DD.SelectSingleNode("/SYSTEM/CSTM_CUSTOMERID")
+	If Not N is Nothing then N.parentnode.removechild(N)
+	 
+	'Now loop and populate a new child node
+	Cnt=1
+	SET rsCustomer = pCN.Execute("SELECT CustomerID, CustomerName FROM Customer ORDER BY CustomerName")
+	Do While Not rsCustomer.EOF
+		'strCustomerID = Mid(Trim(rsCustomer.Fields("CustomerID")),1,15) & Space(02)
+		strCustomerName = Trim(rsCustomer.Fields("CustomerName"))
+		
+		'SYS.E("/SYSTEM/CSTM_CUSTOMERID[" & cnt & "]/PLAINTEXT") = strCustomerName
+		SYS.E("/SYSTEM/CSTM_CUSTOMERID[" & cnt & "]/SYMBOL") = strCustomerName
+		Cnt = Cnt + 1
+		rsCustomer.MoveNext
+	Loop
+	
+	'Code empties recordset
+	Set rsCustomer = Nothing
+
+End Function
+
+Function LookupCustomerbyID(strCustomerID)
+	'======================================================================
+	' This function gets called whenever CompanyID field on shipping screen 
+	' changes and manual shipment.
+	'======================================================================
+	
+	Query = "SELECT CustomerID, CustomerName, CustomerContact, CustomerAddress1, " & _
+		    "CustomerAddress2, CustomerAddress3, CustomerCity, CustomerState, " & _
+		    "CustomerZip, CustomerZip, CustomerPhone, CustomerCountry, ResidentialFlag, " & _
+			"DefaultPaymentType, UPSAccountNumber, FedExAccountNumber, BillToCustomerName, " & _
+			"BillToCustomerAddress1, BillToCustomerAddress2, BillToCity, BillToState, " & _
+			"BillToZip, BillToCountry " & _
+		    "FROM CSTM.Customer WHERE CustomerID = '" & UCase(Trim(strCustomerID)) & "'"
+	
+	Set rsCustomer = pCN.Execute(Query)
+	
+		If rsCustomer.eof Then
+			'Code displays error message if CustomerID not found in CSTM(Customer) table
+			strErrorMessage = "Customer Name  " &  UCase(Trim(strCustomerID)) & "  not found in CSTM(Customer) table" & Vbcrlf & _
+							  "Please verify Customer Name"
+							  
+			strWindowName = "No Record Found - User_scripts.CustomerLookup"
+			MsgBox strErrorMessage,vbInformation + vbOkOnly, strWindowName
+		Else
+			'Code populates ProShip fields
+			s.e("SHIPMENT/COMMON/CONSIGNEE_COMPANY") = UCase(Trim(rsCustomer.Fields("CustomerName").value & "" ))
+			s.e("SHIPMENT/COMMON/CONSIGNEE_CONTACT") = UCase(Trim(rsCustomer.Fields("CustomerContact").value & "" ))
+			s.e("SHIPMENT/COMMON/CONSIGNEE_ADDRESS1") = UCase(Trim(rsCustomer.Fields("CustomerAddress1").value & ""))
+			s.e("SHIPMENT/COMMON/CONSIGNEE_ADDRESS2") = UCase(Trim(rsCustomer.Fields("CustomerAddress2").value & ""))
+			s.e("SHIPMENT/COMMON/CONSIGNEE_ADDRESS3") = UCase(Trim(rsCustomer.Fields("CustomerAddress3").value & ""))
+			s.e("SHIPMENT/COMMON/CONSIGNEE_CITY") = UCase(Trim(rsCustomer.Fields("CustomerCity").value & ""))
+			s.e("SHIPMENT/COMMON/CONSIGNEE_STATE") = UCase(Trim(rsCustomer.Fields("CustomerState").value & ""))
+			s.e("SHIPMENT/COMMON/CONSIGNEE_POSTALCODE") = Trim(rsCustomer.Fields("CustomerZip").value & "")
+			s.e("SHIPMENT/COMMON/CONSIGNEE_PHONE") = rsCustomer.Fields("CustomerPhone").value & ""
+
+			'Code plugs US if country field is empty
+			If rsCustomer.Fields("CustomerCountry").value = "" Then
+				s.e("SHIPMENT/COMMON/CONSIGNEE_COUNTRY") = "US"  
+			Else
+				s.e("SHIPMENT/COMMON/CONSIGNEE_COUNTRY") = UCase(Trim(rsCustomer.Fields("CustomerCountry").value & ""))
+			End If
+			
+			'Code sets on Residential flag in ProShip if Residential Flag on CSTM(History) equals "Y"
+			If UCase(rsCustomer.Fields("ResidentialFlag")) = "Y" Then
+				s.e("SHIPMENT/COMMON/CONSIGNEE_RESIDENTIAL") = "True"
+			Else
+				s.e("SHIPMENT/COMMON/CONSIGNEE_RESIDENTIAL") = "False"		
+			End If
+			
+			'Code looks to see if customer in CSTM(Customer) table has something in DefaultPayment type
+			If rsCustomer.Fields("DefaultPaymentType").value <> "" _
+				And Ucase(Trim(rsCustomer.Fields("DefaultPaymentType").value)) <> "PREPAID" Then
+				
+				'Code changes terms from COLLECT to CONSIGNEE since COLLECT isn't valid
+				If Ucase(Trim(rsCustomer.Fields("DefaultPaymentType").value)) = "COLLECT" Then
+					S.E("SHIPMENT/COMMON/TERMS") = "CONSIGNEE"
+				Else
+					S.E("SHIPMENT/COMMON/TERMS") = Trim(rsCustomer.Fields("DefaultPaymentType").value)
+					
+					'Code populates thrid party billing node in Proship from CSTM customer table
+					If Ucase(Trim(rsCustomer.Fields("DefaultPaymentType").value)) = "THIRD_PARTY" Then
+						s.e("SHIPMENT/COMMON/TPBILL_COMPANY") = Trim(rsCustomer.Fields("BillToCustomerName").value)
+						s.e("SHIPMENT/COMMON/TPBILL_ADDRESS1") = Trim(rsCustomer.Fields("BillToCustomerAddress1").value)		
+						s.e("SHIPMENT/COMMON/TPBILL_ADDRESS2") = Trim(rsCustomer.Fields("BillToCustomerAddress2").value)						
+						s.e("SHIPMENT/COMMON/TPBILL_CITY") = Trim(rsCustomer.Fields("BillToCity").value)
+						s.e("SHIPMENT/COMMON/TPBILL_STATE") = Trim(rsCustomer.Fields("BillToState").value)
+						s.e("SHIPMENT/COMMON/TPBILL_POSTALCODE") = Trim(rsCustomer.Fields("BillToZip").value)	
+						s.e("SHIPMENT/COMMON/TPBILL_COUNTRY") = Trim(rsCustomer.Fields("BillToCountry").value)
+					End If
+				End If
+				
+				'Code plugs UPS account number from CSTM(History) is found
+				If rsCustomer.Fields("UPSAccountNumber").value <> "" Then
+					S.E("SHIPMENT/COMMON/CONSIGNEE_ACCOUNT") = Trim(rsCustomer.Fields("UPSAccountNumber").value)
+				
+				'Code plugs FedEx account number from CSTM(History) is found
+				ElseIf rsCustomer.Fields("FedExAccountNumber").value <> "" Then
+					S.E("SHIPMENT/COMMON/CONSIGNEE_ACCOUNT") = Trim(rsCustomer.Fields("FedExAccountNumber").value)
+
+				End If
+			End If
+		End If
+
+	'Code empties recordset
+	Set rsCustomer = Nothing
+
+End Function
+
+
+Function LookupCustomerbyName(strCustomerName)
+	'======================================================================
+	' This function gets called whenever CompanyID field on shipping screen 
+	' changes and manual shipment.
+	'======================================================================
+	
+	Query = "SELECT CustomerID, CustomerName, CustomerContact, CustomerAddress1, " & _
+		    "CustomerAddress2, CustomerAddress3, CustomerCity, CustomerState, " & _
+		    "CustomerZip, CustomerZip, CustomerPhone, CustomerCountry, ResidentialFlag, " & _
+			"DefaultPaymentType, UPSAccountNumber, FedExAccountNumber, BillToCustomerName, " & _
+			"BillToCustomerAddress1, BillToCustomerAddress2, BillToCity, BillToState, " & _
+			"BillToZip, BillToCountry " & _
+		    "FROM CSTM.Customer WHERE CustomerName = '" & UCase(Trim(strCustomerID)) & "'"
+	
+	Set rsCustomer = pCN.Execute(Query)
+	
+		If rsCustomer.eof Then
+			'Code displays error message if CustomerID not found in CSTM(Customer) table
+			strErrorMessage = "Customer Name  " &  UCase(Trim(strCustomerID)) & "  not found in CSTM(Customer) table" & Vbcrlf & _
+							  "Please verify Customer Name"
+							  
+			strWindowName = "No Record Found - User_scripts.CustomerLookup"
+			MsgBox strErrorMessage,vbInformation + vbOkOnly, strWindowName
+		Else
+			'Code populates ProShip fields
+			s.e("SHIPMENT/COMMON/CONSIGNEE_COMPANY") = UCase(Trim(rsCustomer.Fields("CustomerName").value & "" ))
+			s.e("SHIPMENT/COMMON/CONSIGNEE_CONTACT") = UCase(Trim(rsCustomer.Fields("CustomerContact").value & "" ))
+			s.e("SHIPMENT/COMMON/CONSIGNEE_ADDRESS1") = UCase(Trim(rsCustomer.Fields("CustomerAddress1").value & ""))
+			s.e("SHIPMENT/COMMON/CONSIGNEE_ADDRESS2") = UCase(Trim(rsCustomer.Fields("CustomerAddress2").value & ""))
+			s.e("SHIPMENT/COMMON/CONSIGNEE_ADDRESS3") = UCase(Trim(rsCustomer.Fields("CustomerAddress3").value & ""))
+			s.e("SHIPMENT/COMMON/CONSIGNEE_CITY") = UCase(Trim(rsCustomer.Fields("CustomerCity").value & ""))
+			s.e("SHIPMENT/COMMON/CONSIGNEE_STATE") = UCase(Trim(rsCustomer.Fields("CustomerState").value & ""))
+			s.e("SHIPMENT/COMMON/CONSIGNEE_POSTALCODE") = Trim(rsCustomer.Fields("CustomerZip").value & "")
+			s.e("SHIPMENT/COMMON/CONSIGNEE_PHONE") = rsCustomer.Fields("CustomerPhone").value & ""
+
+			'Code plugs US if country field is empty
+			If rsCustomer.Fields("CustomerCountry").value = "" Then
+				s.e("SHIPMENT/COMMON/CONSIGNEE_COUNTRY") = "US"  
+			Else
+				s.e("SHIPMENT/COMMON/CONSIGNEE_COUNTRY") = UCase(Trim(rsCustomer.Fields("CustomerCountry").value & ""))
+			End If
+			
+			'Code sets on Residential flag in ProShip if Residential Flag on CSTM(History) equals "Y"
+			If UCase(rsCustomer.Fields("ResidentialFlag")) = "Y" Then
+				s.e("SHIPMENT/COMMON/CONSIGNEE_RESIDENTIAL") = "True"
+			Else
+				s.e("SHIPMENT/COMMON/CONSIGNEE_RESIDENTIAL") = "False"		
+			End If
+			
+			'Code looks to see if customer in CSTM(Customer) table has something in DefaultPayment type
+			If rsCustomer.Fields("DefaultPaymentType").value <> "" _
+				And Ucase(Trim(rsCustomer.Fields("DefaultPaymentType").value)) <> "PREPAID" Then
+				
+				'Code changes terms from COLLECT to CONSIGNEE since COLLECT isn't valid
+				If Ucase(Trim(rsCustomer.Fields("DefaultPaymentType").value)) = "COLLECT" Then
+					S.E("SHIPMENT/COMMON/TERMS") = "CONSIGNEE"
+				Else
+					S.E("SHIPMENT/COMMON/TERMS") = Trim(rsCustomer.Fields("DefaultPaymentType").value)
+				End If
+				
+				'Code plugs UPS account number from CSTM(History) is found
+				If rsCustomer.Fields("UPSAccountNumber").value <> "" Then
+					S.E("SHIPMENT/COMMON/CONSIGNEE_ACCOUNT") = Trim(rsCustomer.Fields("UPSAccountNumber").value)
+					
+					'Code populates thrid party billing node in Proship from CSTM customer table
+					If Ucase(Trim(rsCustomer.Fields("DefaultPaymentType").value)) = "THIRD_PARTY" Then
+						s.e("SHIPMENT/COMMON/TPBILL_COMPANY") = Trim(rsCustomer.Fields("BillToCustomerName").value)
+						s.e("SHIPMENT/COMMON/TPBILL_ADDRESS1") = Trim(rsCustomer.Fields("BillToCustomerAddress1").value)		
+						s.e("SHIPMENT/COMMON/TPBILL_ADDRESS2") = Trim(rsCustomer.Fields("BillToCustomerAddress2").value)						
+						s.e("SHIPMENT/COMMON/TPBILL_CITY") = Trim(rsCustomer.Fields("BillToCity").value)
+						s.e("SHIPMENT/COMMON/TPBILL_STATE") = Trim(rsCustomer.Fields("BillToState").value)
+						s.e("SHIPMENT/COMMON/TPBILL_POSTALCODE") = Trim(rsCustomer.Fields("BillToZip").value)	
+						s.e("SHIPMENT/COMMON/TPBILL_COUNTRY") = Trim(rsCustomer.Fields("BillToCountry").value)
+					End If
+				
+				'Code plugs FedEx account number from CSTM(History) is found
+				ElseIf rsCustomer.Fields("FedExAccountNumber").value <> "" Then
+					S.E("SHIPMENT/COMMON/CONSIGNEE_ACCOUNT") = Trim(rsCustomer.Fields("FedExAccountNumber").value)
+
+				End If
+			End If
+		End If
+
+	'Code empties recordset
+	Set rsCustomer = Nothing
+
+End Function
+
+Function ValidateDepartmentCode(strDepartmentCode, strErrorMessage)	
+	'========================================================================
+	' This function reads CSTM(Department) to make suer that operator entered a valid
+	'department code in drop down list.
+	'========================================================================
+
+	Query = "SELECT DepartmentCode, DepartmentName FROM Department " & _
+			"Where DepartmentCode = '" & strDepartmentCode & "'"
+	
+	Set rsDepartment = pCN.Execute(Query)
+
+	If rsDepartment.eof Then
+		strErrorMessage = "Department Code  " & UCase(strDepartmentCode) & "  is invalid." & vbCrLf & _
+					"Please enter a valid Department Code."
+	Else
+		strErrorMessage = ""
+	End If
+	
+	'Code empties recordset
+	Set rsDepartment = Nothing
+End Function
+
+Function ValidateCarrierAccountInformation(OkToContinue)
+	'=========================================================================
+	' This function validates to make sure that when shipping Collect we received account
+	' number from Oracle. Also make sure that Bill 3rd Party Information is setup.
+	'=========================================================================
+	
+	If Left(Trim(s.e("SHIPMENT/SERVICE")),12) = "BWTI_UPS.UPS" Then
+		If Trim(s.e("SHIPMENT/COMMON/TERMS")) = "CONSIGNEE" _
+			And s.e("SHIPMENT/COMMON/CONSIGNEE_ACCOUNT") = "" Then
+			
+			strErrorMessage = "UPS Account Number is missing or in Valid. Please correct"  & vbCrlf & _
+							"account number or change Payment Terms before continuing"
+			strWindowName = "User_Scripts.ValidateCarrier AccountInformation"
+			MsgBox strErrorMessage,vbExclamation + vbOkOnly,strWindowName
+			OkToContinue = False
+		
+		ElseIf Trim(s.e("SHIPMENT/COMMON/TERMS")) = "THIRD_PARTY"  Then
+			If Trim(s.e("SHIPMENT/COMMON/CONSIGNEE_ACCOUNT")) = "" Then
+			
+				strErrorMessage = "UPS Bill 3rd Party Account Number is missing or in Valid Please correct"  & vbCrlf & _
+								"account number or change Payment Terms before continuing"
+				strWindowName = "User_Scripts.ValidateCarrier AccountInformation"
+				MsgBox strErrorMessage,vbExclamation + vbOkOnly,strWindowName	
+				OkToContinue = False
+				
+			ElseIf Trim(s.e("SHIPMENT/COMMON/CONSIGNEE_ACCOUNT")) <> "" _
+					And Trim(s.e("SHIPMENT/COMMON/TPBILL_COMPANY")) = "" Then
+				Call GetBill3rdPartyInformation(strErrorMessage, OkToContinue)
+				
+				'Code displays error message if error message was returned
+				If OkToContinue = False Then
+					strWindowName = "User_Scripts.GetBill3rdPartyInformation"
+					MsgBox strErrorMessage,vbExclamation + vbOkOnly,strWindowName
+				End If
+			End If
+		End If
+	'Code looks for FedEx Express and displays error message to operator if shipping
+	'terms ot shipper.
+	ElseIf Left(Trim(s.e("SHIPMENT/SERVICE")),14) = "BWTI_FXRS.FXRS" Then
+		If Trim(s.e("SHIPMENT/COMMON/TERMS")) = "CONSIGNEE" _
+			Or Trim(s.e("SHIPMENT/COMMON/TERMS")) = "THIRD_PARTY" Then
+			
+			If s.e("SHIPMENT/COMMON/CONSIGNEE_ACCOUNT") = "" Then
+			
+				strErrorMessage = "FedEx Account Number is missing or in Valid. Please correct"  & vbCrlf & _
+								"account number or change Payment Terms before continuing"
+				strWindowName = "User_Scripts.ValidateCarrier AccountInformation"
+				MsgBox strErrorMessage,vbExclamation + vbOkOnly,strWindowName
+				OkToContinue = False
+			End If
+		End If
+	End If
+End Function
+
+Function ConvertFirstClassToPriority()
+	'========================================================================
+	' This function upgrades USPS First Class mail to Priority mail if package weighs
+	' more than 13oz.
+	'========================================================================
+
+	If CNum(s.e("SHIPMENT/PACKAGE/WEIGHT")) > .81 Then
+		s.e("SHIPMENT/SERVICE") = "BWTI_USPS.USPS.PM"
+	End If
+End Function
+
+Function GetWeight(OkToRateShipment)
+	'========================================================================
+	'  Code checks for weight from scale and if zero then displays message
+	'  for operator to place box on scale.
+	'========================================================================
+
+	If CNum(Shipment.E("SHIPMENT/PACKAGE/WEIGHT")) > 0 then
+		Shipment.Rate 0
+		OkToRateShipment = True			
+	Else
+		'Displays error message if package not on scale.
+		strErrorMessage = "Please put Package on Scale and Press Enter Key"
+		strWindowName = "Scale Error - User_Scripts.GetWeight"
+		strWindowButtons = vbExclamation + vbOkOnly
+		MsgBox strErrorMessage,strWindowButtons,strWindowName
+
+		'This code gets weight from scale.
+		Shipment.E("SHIPMENT/PACKAGE/WEIGHT") = Shipment.Weigh 
+	
+		If CNum(Shipment.E("SHIPMENT/PACKAGE/WEIGHT")) > 0 Then
+			Shipment.Rate 0
+			OkToRateShipment = True	
+		Else
+			OkToRateShipment = False
+		End If
+	End If
+End Function
+
+Function PrintWalmartUCCLabel(strDestPrinter, SH, ReprintPrefix, intPackage, intTotalPackages)
+	'========================================================================
+	' This function builds a Walmart UCC Container labve and sends it to printer
+	'========================================================================
+	
+	'Code puts togther City, State, Zip in onel field that prints on UCC Label
+	strCityStateZip = Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_CITY")) & "  " & _
+					  Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_STATE")) & "  " & _
+					  Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE"))
+	
+	'Code makes UCC Human readable from UCC number on UCC Label
+	strHumanReadableUCC = "(" & Left(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),2) & ")" & _
+						  Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),3,18)
+	
+	'Code calls function to parse out carrier name
+	strShipMethodDescription = Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_SHIPMETHOD_DESCRIPTION"))
+	Call ParseCarrierforUCCLabel(strUCCLabelCarrier, strShipMethodDescription)
+	
+	'Checks for Walmart order type and plugs one if field in empty
+	If sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_ORDER_TYPE") = "" Then
+		strCustomerOrderType = "0033"
+	Else
+		strCustomerOrdertype = Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_ORDER_TYPE"))
+	End If
+	
+	'Checks for Walmart Department and plugs one if field in empty
+	If sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_DEPARTMENT") = "" Then
+		strDepartment = "00006"
+	Else
+		strDepartment = Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_DEPARTMENT"))
+	End If
+
+	strLabel = "N" & vbcrlf
+	strLabel = strLabel & "A35,9,0,2,1,2,N," & chr(34) & "FROM:" & chr(34) & chr(10)
+	strLabel = strlabel & "A35,46,0,1,1,2,N," & chr(34) & "PAIC " & chr(34) & chr(10)
+	strLabel = strLabel & "A35,74,0,1,1,2,N," & chr(34) & "3500 N WINDSON DRIVE" & chr(34) & chr(10)
+	strLabel = strlabel & "A35,103,0,1,1,2,N," & chr(34) & "SUITE 400" & chr(34) & chr(10)
+	strLabel = strlabel & "A35,133,0,1,1,2,N," & chr(34) & "AURORA  CO  80011" & chr(34) & chr(10)
+	strLabel = strLabel & "A357,9,0,2,1,2,N," & chr(34) & "SHIP TO:" & chr(34) & chr(10)
+	
+	strLabel = strLabel & "A668,9,0,4,1,1,N," & chr(34) & Trim(intPackage) & chr(34) & chr(10)
+	strLabel = strLabel & "A711,9,0,4,1,1,N," & chr(34) & "OF" & chr(34) & chr(10)
+	strLabel = strLabel & "A767,9,0,4,1,1,N," & chr(34) & Trim(intTotalPackages) & chr(34) & chr(10)
+	
+	strLabel = strLabel & "A353,40,0,4,1,1,N," & chr(34) & sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_COMPANY") & chr(34) & chr(10)
+	strLabel = strLabel & "A355,76,0,4,1,1,N," & chr(34) & sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_ADDRESS1") & chr(34) & chr(10)
+	strLabel = strLabel & "A355,106,0,4,1,1,N," & chr(34) & sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_ADDRESS2") & chr(34) & chr(10)
+	strLabel = strLabel & "A355,137,0,4,1,1,N," & chr(34) & strCityStateZip & chr(34) & chr(10)
+	strLabel = strLabel & "LO314,0,4,389" & vbCrLf 
+	strLabel = strLabel & "LO0,176,812,4" & vbCrLf
+	strLabel = strLabel & "A35,190,0,4,1,1,N," & chr(34) & "POSTAL CODE" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,230,0,4,1,1,N," & chr(34) & "(420)" & Mid(Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE")),1,5) & chr(34) & chr(10)
+	strLabel = strlabel & "B35,266,0,1,3,0,102,N," & chr(34) & "420" & Mid(Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE")),1,5) & chr(34) & chr(10)
+	strLabel = strLabel & "A349,192,0,3,2,2,N," & chr(34) & "CARRIER" & chr(34) & chr(10)
+	strLabel = strLabel & "A349,239,0,3,1,2,N," & chr(34) & Trim(strUCCLabelCarrier) & chr(34) & chr(10)
+	strLabel = strLabel & "A349,293,0,2,1,2,N," & chr(34) & "PRO:" & chr(34) & chr(10)
+	strLabel = strLabel & "A443,293,0,2,1,2,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/TRACKING_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "A349,332,0,2,1,2,N," & chr(34) & "B/L:" & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,387,812,4" & vbCrLf
+	strlabel = strLabel & "A41,405,0,3,1,2,N," & chr(34) & "LOC#" & chr(34) & chr(10)
+	strLabel = strLabel & "A193,405,0,3,1,2,N," & chr(34) & "TYPE" & chr(34) & chr(10)
+	strlabel = strLabel & "A374,405,0,3,1,2,N," & chr(34) & "DEPT" & chr(34) & chr(10)
+	strLabel = strLabel & "A558,405,0,3,1,2,N," & chr(34) & "ORDER #" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,452,0,3,2,2,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_STORE_NUMBER"))& chr(34) & chr(10)
+	strLabel = strLabel & "A183,452,0,3,2,2,N," & chr(34) & strCustomerOrderType & chr(34) & chr(10)
+	strLabel = strLabel & "A337,452,0,3,2,2,N," & chr(34) & strDepartment & chr(34) & chr(10)
+	strLabel = strlabel & "A508,452,0,3,2,2,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_PO_NUMBER")) & chr(34) & chr(10)
+	strLabel = strlabel & "A35,519,0,3,1,2,N," & chr(34) & "WMIT:" & chr(34) & chr(10)
+	strLabel = strLabel & "A177,519,0,3,2,2,N," & chr(34) & Trim(sh.e(ReprintPrefix & "/COMMON/PACK/BOX[NUMBER=" & intPackage & "]/LINE[1]/PACK_ITEMID")) & chr(34) & chr(10)
+	strLabel = strLabel & "LO2,584,808,4" & vbCrLf
+	strLabel = strLabel & "LO0,766,810,4" & vbCrLf
+	strLabel = strLabel & "B124,849,0,1,4,0,244,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "A225,1121,0,3,1,2,N," & chr(34) & Trim(strHumanReadableUCC) & chr(34) & chr(10)
+	strLabel = strLabel & "P1" & vbcrlf
+
+	'msgBox strLabel 
+	
+	saveAsFile strLabel,strDestPrinter
+	
+End Function
+
+
+Function PrintSamsClubUCCLabel(strDestPrinter, SH, ReprintPrefix, intPackage, intTotalPackages)
+	'========================================================================
+	' This function builds a Sams Club UCC Container labve and sends it to printer
+	'========================================================================
+	
+	'Code puts togther City, State, Zip in onel field that prints on UCC Label
+	strCityStateZip = Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_CITY")) & "  " & _
+					  Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_STATE")) & "  " & _
+					  Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE"))
+	
+	'Code makes UCC Human readable from UCC number on UCC Label	
+	strHumanReadableUCC = "(" & Left(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),2) & ")" & _
+						  Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),3,18)
+	
+	'Code calls function to parse out carrier name
+	strShipMethodDescription = Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_SHIPMETHOD_DESCRIPTION"))
+	Call ParseCarrierforUCCLabel(strUCCLabelCarrier, strShipMethodDescription)	
+	
+	'Checks for Walmart order type and plugs one if field in empty
+	If sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_ORDER_TYPE") = "" Then
+		strCustomerOrderType = "0033"
+	Else
+		strCustomerOrdertype = Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_ORDER_TYPE"))
+	End If
+	
+	'Checks for Walmart Department and plugs one if field in empty
+	If sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_DEPARTMENT") = "" Then
+		strDepartment = "00006"
+	Else
+		strDepartment = Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_DEPARTMENT"))
+	End If
+
+	strLabel = "N" & vbcrlf
+	strLabel = strLabel & "A35,9,0,2,1,2,N," & chr(34) & "FROM:" & chr(34) & chr(10)
+	strLabel = strlabel & "A35,46,0,1,1,2,N," & chr(34) & "PAIC " & chr(34) & chr(10)
+	strLabel = strLabel & "A35,74,0,1,1,2,N," & chr(34) & "3500 N WINDSON DRIVE" & chr(34) & chr(10)
+	strLabel = strlabel & "A35,103,0,1,1,2,N," & chr(34) & "SUITE 400" & chr(34) & chr(10)
+	strLabel = strlabel & "A35,133,0,1,1,2,N," & chr(34) & "AURORA  CO 80011" & chr(34) & chr(10)
+	strLabel = strLabel & "A357,9,0,2,1,2,N," & chr(34) & "SHIP TO:" & chr(34) & chr(10)
+	
+	strLabel = strLabel & "A668,9,0,4,1,1,N," & chr(34) & Trim(intPackage) & chr(34) & chr(10)
+	strLabel = strLabel & "A711,9,0,4,1,1,N," & chr(34) & "OF" & chr(34) & chr(10)
+	strLabel = strLabel & "A767,9,0,4,1,1,N," & chr(34) & Trim(intTotalPackages) & chr(34) & chr(10)
+		
+	strLabel = strLabel & "A353,40,0,4,1,1,N," & chr(34) & sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_COMPANY") & chr(34) & chr(10)
+	strLabel = strLabel & "A355,76,0,4,1,1,N," & chr(34) & sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_ADDRESS1") & chr(34) & chr(10)
+	strLabel = strLabel & "A355,106,0,4,1,1,N," & chr(34) & sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_ADDRESS2") & chr(34) & chr(10)
+	strLabel = strLabel & "A355,137,0,4,1,1,N," & chr(34) & strCityStateZip & chr(34) & chr(10)
+	strLabel = strLabel & "LO314,0,4,389" & vbCrLf 
+	strLabel = strLabel & "LO0,176,812,4" & vbCrLf
+	strLabel = strLabel & "A35,190,0,4,1,1,N," & chr(34) & "POSTAL CODE" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,230,0,4,1,1,N," & chr(34) & "(420) " & Mid(Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE")),1,5) & chr(34) & chr(10)
+	strLabel = strlabel & "B35,266,0,1,3,0,102,N," & chr(34) & "420" & Mid(Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE")),1,5) & chr(34) & chr(10)
+	strLabel = strLabel & "A349,192,0,3,2,2,N," & chr(34) & "CARRIER" & chr(34) & chr(10)
+	strLabel = strLabel & "A349,239,0,3,1,2,N," & chr(34) & Trim(strUCCLabelCarrier) & chr(34) & chr(10)
+	strLabel = strLabel & "A349,293,0,2,1,2,N," & chr(34) & "PRO:" & chr(34) & chr(10)
+	strLabel = strLabel & "A443,293,0,2,1,2,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/TRACKING_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "A349,332,0,2,1,2,N," & chr(34) & "B/L:" & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,387,812,4" & vbCrLf
+	strlabel = strLabel & "A41,405,0,3,1,2,N," & chr(34) & "LOC#" & chr(34) & chr(10)
+	strLabel = strLabel & "A193,405,0,3,1,2,N," & chr(34) & "TYPE" & chr(34) & chr(10)
+	strlabel = strLabel & "A374,405,0,3,1,2,N," & chr(34) & "DEPT" & chr(34) & chr(10)
+	strLabel = strLabel & "A558,405,0,3,1,2,N," & chr(34) & "ORDER #" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,452,0,3,2,2,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_STORE_NUMBER"))  & chr(34) & chr(10)
+	strLabel = strLabel & "A183,452,0,3,2,2,N," & chr(34) & strCustomerOrderType & chr(34) & chr(10)
+	strLabel = strLabel & "A337,452,0,3,2,2,N," & chr(34) & strDepartment & chr(34) & chr(10)
+	strLabel = strlabel & "A508,452,0,3,2,2,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_PO_NUMBER")) & chr(34) & chr(10)
+	strLabel = strlabel & "A35,519,0,3,1,2,N," & chr(34) & "WMIT:" & chr(34) & chr(10)
+	strLabel = strLabel & "A177,519,0,3,2,2,N," & chr(34) & Trim(sh.e(ReprintPrefix & "/COMMON/PACK/BOX[NUMBER=" & intPackage & "]/LINE[1]/PACK_ITEMID")) & chr(34) & chr(10)
+	strLabel = strLabel & "LO2,584,808,4" & vbCrLf
+	strLabel = strLabel & "LO0,766,810,4" & vbCrLf
+	strLabel = strLabel & "B124,849,0,1,4,0,244,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "A225,1121,0,3,1,2,N," & chr(34) & Trim(strHumanReadableUCC) & chr(34) & chr(10)
+	strLabel = strLabel & "P1" & vbcrlf
+
+	'msgBox strLabel 
+	
+	SaveAsFile strLabel,strDestPrinter
+	
+End Function
+
+Function PrintGARTSUCCLabel(strDestPrinter, SH, ReprintPrefix, intPackage, intTotalPackages)
+	'========================================================================
+	' This function builds a GARTS UCC Container label and sends it to printer
+	'========================================================================
+
+	strCityStateZip = Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_CITY")) & "  " & _
+					  Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_STATE")) & "  " & _
+					  Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE"))
+					  
+	strHumanReadableUCC = "(" & Left(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),2) & ")" & _
+						  Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),3,18)
+						  
+	'Code calls function to parse out carrier name
+	strShipMethodDescription = Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_SHIPMETHOD_DESCRIPTION"))
+	Call ParseCarrierforUCCLabel(strUCCLabelCarrier, strShipMethodDescription)
+	
+	strLabel = "N" & vbCrLf
+	strLabel = strLabel & "A35,9,0,2,1,2,N," & chr(34) & "FROM:" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,46,0,1,1,2,N," & chr(34) & "PAIC " & chr(34) & chr(10)
+	strLabel = strLabel & "A35,74,0,1,1,2,N," & chr(34) & "3500 N WINDSON DRIVE" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,103,0,1,1,2,N," & chr(34) & "SUITE 400" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,133,0,1,1,2,N," & chr(34) & "AURORA  CO  80011" & chr(34) & chr(10)
+	strLabel = strLabel & "A357,9,0,2,1,2,N," & chr(34) & "SHIP TO:" & chr(34) & chr(10)
+	
+	strLabel = strLabel & "A668,9,0,4,1,1,N," & chr(34) & Trim(intPackage) & chr(34) & chr(10)
+	strLabel = strLabel & "A711,9,0,4,1,1,N," & chr(34) & "OF" & chr(34) & chr(10)
+	strLabel = strLabel & "A767,9,0,4,1,1,N," & chr(34) & Trim(intTotalPackages) & chr(34) & chr(10)	
+	
+	strLabel = strLabel & "A353,40,0,4,1,1,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_COMPANY")) & chr(34) & chr(10)
+	strLabel = strLabel & "A355,76,0,4,1,1,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_ADDRESS1")) & chr(34) & chr(10)
+	strLabel = strLabel & "A355,106,0,4,1,1,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_ADDRESS2")) & chr(34) & chr(10)
+	strLabel = strLabel & "A355,137,0,4,1,1,N," & chr(34) & Trim(strCityStateZip) & chr(34) & chr(10)
+	
+	strLabel = strLabel & "LO314,0,2,342" & vbCrLf
+	strLabel = strLabel & "LO0,176,812,4" & vbCrLf
+	strLabel = strLabel & "A51,192,0,4,1,1,N," & chr(34) & "(420) " & Mid(Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE")),1,5)  & chr(34) & chr(10)
+	strLabel = strLabel & "B39,223,0,1,3,0,102,N," & chr(34) & "420" & Mid(Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE")),1,5) & chr(34) & chr(10)
+	strLabel = strLabel & "A329,192,0,1,2,3,N," & chr(34) & "Carrier:" & chr(34) & chr(10)
+	strLabel = strLabel & "A512,192,0,3,1,2,N," & chr(34) & Trim(strUCCLabelCarrier) & chr(34) & chr(10)
+	strLabel = strLabel & "A329,259,0,1,2,3,N," & chr(34) & "Shipment#:" & chr(34) & chr(10)
+	strLabel = strLabel & "A538,259,0,2,1,2,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/TRACKING_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,340,808,4" & vbCrLf
+	strLabel = strLabel & "A35,358,0,1,2,3,N," & chr(34) & "PO   :" & chr(34) & chr(10)
+	strLabel = strLabel & "A116,356,0,1,2,3,N," & chr(34) &  Trim(sh.e(ReprintPrefix & "//CMS/CSTM_PO_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "A35,399,0,1,2,3,N," & chr(34) & "DEPT :" &  chr(34) & chr(10)
+	strLabel = strLabel & "A203,399,0,1,2,3,N," & chr(34) & sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_DEPARTMENT") & Chr(34) & Chr(10)
+	strLabel = strLabel & "A35,444,0,1,2,3,N," & Chr(34) & "UPC#:" & Chr(34) & Chr(10)
+	strLabel = strLabel & "A203,444,0,1,2,3,N," & Chr(34) & Trim(sh.e(ReprintPrefix & "/COMMON/PACK/BOX[NUMBER=" & intPackage & "]/LINE[1]/PACK_PRINT_UPC")) & chr(34) & chr(10)
+	strLabel = strLabel & "A35,484,0,1,2,3,N," & chr(34) & "CARTON QUANTITY:" & chr(34) & Chr(10)
+	strLabel = strLabel & "A497,484,0,1,2,3,N," & chr(34) & Trim(sh.e(ReprintPrefix & "/COMMON/PACK/BOX[NUMBER=" & intPackage & "]/LINE[1]/PACK_QUANTITY")) & chr(34) & chr(10)
+	strLabel = strLabel & "A35,527,0,1,2,3,N," & chr(34) & "CARTON:" & chr(34) & chr(10)
+	strLabel = strLabel & "A309,527,0,1,2,3,N," & chr(34) & Trim(intPackage) & chr(34) & chr(10)
+	strLabel = strLabel & "A371,527,0,1,2,3,N," & chr(34) & "OF" & chr(34) & chr(10)
+	strLabel = strLabel & "A473,527,0,1,2,3,N," & chr(34) & Trim(intTotalPackages) & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,582,810,4" & vbCrLF	
+	strLabel = strLabel & "A142,592,0,4,1,1,N," & chr(34) & "(91)" & chr(34) & chr(10)
+	strLabel = strLabel & "A225,592,0,4,1,1,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_STORE_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "B91,623,0,1,3,0,122,N," & chr(34) & "91" & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_STORE_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "LO424,584,4,185" & vbCrLf
+	strLabel = strLabel & "A536,634,0,2,3,4,N," & Chr(34) & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_STORE_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,766,810,4" & vbCrLf
+	strLabel = strLabel & "A142,839,0,3,1,2,N," & chr(34) & Trim(strHumanReadableUCC) & chr(34) & chr(10)
+	strLabel = strLabel & "B102,897,0,1,4,0,244,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "P1" & vbCrLF
+	
+	'msgBox strLabel 
+	
+	SaveAsFile strLabel,strDestPrinter
+	
+End Function
+
+
+Function PrintBESTBUYUCCLabel(strDestPrinter, SH, ReprintPrefix, intPackage, intTotalPackages)
+	'========================================================================
+	' This function builds a GARTS UCC Container label and sends it to printer
+	'========================================================================
+
+	strCityStateZip = Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_CITY")) & "  " & _
+					  Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_STATE")) & "  " & _
+					  Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE"))
+					  
+	strHumanReadableUCC = "(" & Left(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),2) & ")" & _
+						  Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),3,18)
+						  
+	'Code calls function to parse out carrier name
+	strShipMethodDescription = Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_SHIPMETHOD_DESCRIPTION"))
+	Call ParseCarrierforUCCLabel(strUCCLabelCarrier, strShipMethodDescription)
+
+	strLabel = "N" & vbCrLf
+	strLabel = strLabel & "A41,9,0,2,1,2,N," & chr(34) & "FROM:" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,46,0,1,1,2,N," & chr(34) & "PAIC " & chr(34) & chr(10)
+	strLabel = strLabel & "A35,74,0,1,1,2,N," & chr(34) & "3500 N WINDSOR DRIVE" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,103,0,1,1,2,N," & chr(34) & "SUITE 400" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,133,0,1,1,2,N," & chr(34) & "AURORA  CO  8011" & chr(34) & chr(10)
+	strLabel = strLabel & "LO314,0,4,389" & vbCrLf
+	strLabel = strLabel & "A357,9,0,2,1,2,N," & chr(34) & "TO:" & chr(34) & chr(10)
+	strLabel = strLabel & "A353,40,0,4,1,1,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_COMPANY")) & chr(34) & chr(10)
+	strLabel = strLabel & "A355,76,0,4,1,1,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_ADDRESS1")) & chr(34) & chr(10)
+	strLabel = strLabel & "A355,106,0,4,1,1,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_ADDRESS2")) & chr(34) & chr(10)
+	strLabel = strLabel & "A355,137,0,4,1,1,N," & chr(34) & Trim(strCityStateZip) & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,176,812,4" & vbCrLf
+	
+	strLabel = strLabel & "A668,9,0,4,1,1,N," & chr(34) & Trim(intPackage) & chr(34) & chr(10)
+	strLabel = strLabel & "A711,9,0,4,1,1,N," & chr(34) & "OF" & chr(34) & chr(10)
+	strLabel = strLabel & "A767,9,0,4,1,1,N," & chr(34) & Trim(intTotalPackages) & chr(34) & chr(10)
+	
+	strLabel = strLabel & "A35,190,0,4,1,1,N," & Chr(34) & "SHIP TO ZIP CODE" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,230,0,4,1,1,N," & chr(34) & "(420) " & Mid(Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE")),1,5)  & chr(34) & chr(10)
+	strLabel = strLabel & "B35,266,0,1,3,0,102,N," & chr(34) & "420" & Mid(Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE")),1,5) & chr(34) & chr(10)
+	strLabel = strLabel & "A349,192,0,2,1,2,N," & chr(34) & "CARRIER:" & chr(34) & chr(10)
+	strLabel = strLabel & "A349,239,0,3,2,2,N," & chr(34) & Trim(strUCCLabelCarrier) & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,387,812,4" & vbCrLf
+	strLabel = strLabel & "A51,439,0,3,2,2,N," & chr(34) & "PO#" & chr(34) & chr(10)
+	strLabel = strLabel & "A225,439,0,3,2,2,N," & chr(34) &  Trim(sh.e(ReprintPrefix & "//CMS/CSTM_PO_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,569,812,4" & vbCrLf
+	strLabel = strLabel & "A51,636,0,3,2,2,N," & chr(34) & "ASN" & chr(34) & Chr(10)
+	strLabel = strLabel & "LO0,766,810,4" & vbCrLf
+	strLabel = strLabel & "A35,789,0,2,1,2,N," & chr(34) & "Serial Shipping Container Code" & chr(34) &chr(10)
+	strLabel = strLabel & "A106,839,0,3,1,2,N," & chr(34) & Trim(strHumanReadableUCC) & chr(34) & chr(10)
+	strLabel = strLabel & "B81,897,0,1,4,0,244,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "P1" & vbCrLf
+
+	'msgBox strLabel 
+	
+	SaveAsFile strLabel,strDestPrinter
+	
+End Function
+
+Function PrintGANDERMOUNTAINUCCLabel(strDestPrinter, SH, ReprintPrefix, intPackage, intTotalPackages)
+	'========================================================================
+	' This function builds a GANDER MOUNTAIN UCC Container label and sends it to printer
+	'========================================================================
+
+	strCityStateZip = Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_CITY")) & "  " & _
+					  Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_STATE")) & "  " & _
+					  Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE"))
+	
+	'Builds string of human readable Package UCC Number
+	strHumanReadableUCC = "(" & Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),1,2) & ")" & " " & _
+						  Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),3,1) & " " & _
+						  Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),4,7) & " " & _
+						  Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),11,9) & " " & _
+						  Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),20,1)
+
+	strlabel = "N" & vbCrLf
+	strLabel = strLabel & "A41,9,0,2,1,2,N," & chr(34) & "FROM:" & chr(34) & Chr(10)
+	strLabel = strLabel & "A35,46,0,1,1,2,N," & Chr(34) & "PAIC " & Chr(34) & chr(10)
+	strLabel = strLabel & "A35,74,0,1,1,2,N," & chr(34) & "3500 N WINDSON DRIVE" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,103,0,1,1,2,N," & chr(34) & "SUITE 400" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,133,0,1,1,2,N," & chr(34) & "AURORA  CO  80011" & chr(34) & chr(10)
+	strLabel = strLabel & "LO314,0,-2,182" & VbCrLf
+	strLabel = strLabel & "A357,9,0,2,1,2,N," & chr(34) & "SHIP TO:" & chr(34) & chr(10)
+	
+	strLabel = strLabel & "A668,9,0,4,1,1,N," & chr(34) & Trim(intPackage) & chr(34) & chr(10)
+	strLabel = strLabel & "A711,9,0,4,1,1,N," & chr(34) & "OF" & chr(34) & chr(10)
+	strLabel = strLabel & "A767,9,0,4,1,1,N," & chr(34) & Trim(intTotalPackages) & chr(34) & chr(10)
+	
+	strLabel = strLabel & "A353,40,0,4,1,1,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_COMPANY")) & chr(34) & chr(10)
+	strLabel = strLabel & "A355,76,0,4,1,1,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_ADDRESS1")) & chr(34) & chr(10)
+	strLabel = strLabel & "A355,106,0,4,1,1,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_ADDRESS2")) & chr(34) & chr(10)
+	strLabel = strLabel & "A355,137,0,4,1,1,N," & chr(34) & Trim(strCityStateZip) & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,176,812,4" & vbCrLf
+	strLabel = strLabel & "A35,190,0,4,1,1,N," & chr(34) & "SHIP TO POSTAL CODE" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,230,0,4,1,1,N," & chr(34) & "(420) " & Mid(Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE")),1,5)  & chr(34) & chr(10)
+	strLabel = strLabel & "B41,278,0,1,3,0,102,N," & chr(34) & "420" & Mid(Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE")),1,5) & chr(34) & chr(10)
+	strLabel = strLabel & "LO369,182,3,266" & vbCrLf
+	strLabel = strLabel & "A384,190,0,2,1,2,N," & chr(34) & "STORE #" & chr(34) & chr(10)
+	strLabel = strLabel & "A388,234,0,3,1,2,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_STORE_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "B418,305,0,1,3,0,102,N," & chr(34) & "99999" & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_STORE_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,450,810,4" & vbCrLf
+	strLabel = strLabel & "A45,553,0,3,2,2,N," & chr(34) & "PO#" & chr(34) & chr(10)
+	strLabel = strLabel & "A231,553,0,3,2,2,N," & chr(34) &  Trim(sh.e(ReprintPrefix & "//CMS/CSTM_PO_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,766,810,4" & vbCrLf
+	strLabel = strLabel & "B91,822,0,1,4,0,244,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "A199,1107,0,3,1,2,N," & chr(34) & Trim(strHumanReadableUCC) & chr(34) & chr(10)
+	strLabel = strLabel & "P1" & vbCrLf
+
+	'msgBox strLabel 
+	
+	SaveAsFile strLabel,strDestPrinter
+	
+End Function
+
+Function PrintKMARTUCCLabel(strDestPrinter, SH, ReprintPrefix, intPackage, intTotalPackages)
+	'========================================================================
+	' This function builds a KMART UCC Container label and sends it to printer
+	'========================================================================
+
+	strCityStateZip = Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_CITY")) & "  " & _
+					  Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_STATE")) & "  " & _
+					  Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE"))
+	
+	'Builds string of human readable Package UCC Number
+	strHumanReadableUCC = "(" & Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),1,2) & ")" & " " & _
+						  Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),3,1) & " " & _
+						  Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),4,7) & " " & _
+						  Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),11,9) & " " & _
+						  Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),20,1)
+
+	strLabel = "N" & vbCrLf
+	strLabel = strLabel & "A41,9,0,2,1,2,N," & chr(34) & "FROM:" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,46,0,1,1,2,N," & chr(34) & "PAIC " & chr(34) & chr(10)
+	strLabel = strLabel & "A35,74,0,1,1,2,N," & chr(34) & "3500 N WINDSON DRIVE  SUITE 400" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,103,0,1,1,2,N," & chr(34) & "SUITE 400" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,133,0,1,1,2,N," & chr(34) & "AURORA  CO  80011" & chr(34) & chr(10)
+	strLabel = strLabel & "LO314,0,4,182" & vbCrLf
+	strLabel = strLabel & "A357,9,0,2,1,2,N," & chr(34) & "SHIP TO:" & chr(34) & chr(10)
+	
+	strLabel = strLabel & "A668,9,0,4,1,1,N," & chr(34) & Trim(intPackage) & chr(34) & chr(10)
+	strLabel = strLabel & "A711,9,0,4,1,1,N," & chr(34) & "OF" & chr(34) & chr(10)
+	strLabel = strLabel & "A767,9,0,4,1,1,N," & chr(34) & Trim(intTotalPackages) & chr(34) & chr(10)
+	
+	strLabel = strLabel & "A353,40,0,4,1,1,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_COMPANY")) & chr(34) & chr(10)
+	strLabel = strLabel & "A355,76,0,4,1,1,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_ADDRESS1")) & chr(34) & chr(10)
+	strLabel = strLabel & "A355,106,0,4,1,1,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_ADDRESS2")) & chr(34) & chr(10)
+	strLabel = strLabel & "A355,137,0,4,1,1,N," & chr(34) & Trim(strCityStateZip) & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,176,812,4" & vbCrLf
+	strLabel = strLabel & "A35,190,0,4,1,1,N," & chr(34) & "SHIP TO POSTAL CODE" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,230,0,4,1,1,N," & chr(34) & "(420) " & Mid(Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE")),1,5)  & chr(34) & chr(10)
+	strLabel = strLabel & "B41,278,0,1,3,0,102,N," & chr(34) & "420" & Mid(Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE")),1,5) & chr(34) & chr(10)
+	strLabel = strLabel & "LO369,182,3,229" & vbCrLf
+	strLabel = strLabel & "A384,190,0,2,1,2,N," & chr(34) & "STORE #" & chr(34) & chr(10)
+	strLabel = strLabel & "A394,273,0,3,2,2,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_STORE_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,407,810,4" & vbCrLf
+	strLabel = strLabel & "A49,496,0,3,2,2,N," & chr(34) & "BL #:" & chr(34) & chr(10)
+	strLabel = strLabel & "A233,496,0,3,2,2,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/TRACKING_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "A49,608,0,3,2,2,N," & chr(34) & "PO #:" & chr(34) & chr(10)
+	strLabel = strLabel & "A233,608,0,3,2,2,N," & chr(34) &  Trim(sh.e(ReprintPrefix & "//CMS/CSTM_PO_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,766,810,4" & vbCrLf
+	strLabel = strLabel & "B71,836,0,1,4,0,244,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "A199,1107,0,3,1,2,N," & chr(34) & Trim(strHumanReadableUCC) & chr(34) & chr(10)
+	strLabel = strLabel & "P1" & vbCrLf 
+
+	'msgBox strLabel 
+	
+	SaveAsFile strLabel,strDestPrinter
+	
+End Function
+
+Function PrintAMAZONUCCLabel(strDestPrinter, SH, ReprintPrefix, intPackage, intTotalPackages)
+	'========================================================================
+	' This function builds a AMAZON UCC Container label and sends it to printer
+	'========================================================================
+
+	strCityStateZip = Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_CITY")) & "  " & _
+					  Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_STATE")) & "  " & _
+					  Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE"))
+	
+	'Builds string of human readable Package UCC Number
+	strHumanReadableUCC = "(" & Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),1,2) & ")" & " " & _
+						  Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),3,1) & " " & _
+						  Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),4,7) & " " & _
+						  Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),11,9) & " " & _
+						  Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),20,1)
+
+	strLabel = "N" & vbCrLf
+	strLabel = strLabel & "A102,9,0,2,1,2,N," & chr(34) & "FROM:" & chr(34) & chr(10)
+	strLabel = strLabel & "A102,46,0,4,1,1,N," & chr(34) & "PAIC " & chr(34) & chr(10)
+	strLabel = strLabel & "A102,74,0,4,1,1,N," & chr(34) & "3500 N WINDSON DRIVE" & chr(34) & chr(10)
+	strLabel = strLabel & "A102,103,0,4,1,1,N," & chr(34) & "SUITE 400" & chr(34) & chr(10)
+	strLabel = strLabel & "A102,133,0,4,1,1,N," & chr(34) & "AURORA  CO  80011" & chr(34) & chr(10)
+	strLabel = strLabel & "A102,159,0,2,1,2,N," & chr(34) & "TO:" & chr(34) & chr(10)
+	
+	strLabel = strLabel & "A668,9,0,4,1,1,N," & chr(34) & Trim(intPackage) & chr(34) & chr(10)
+	strLabel = strLabel & "A711,9,0,4,1,1,N," & chr(34) & "OF" & chr(34) & chr(10)
+	strLabel = strLabel & "A767,9,0,4,1,1,N," & chr(34) & Trim(intTotalPackages) & chr(34) & chr(10)	
+	
+	strLabel = strLabel & "A102,208,0,4,1,1,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_COMPANY")) & chr(34) & chr(10)
+	strLabel = strLabel & "A102,243,0,4,1,1,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_ADDRESS1")) & chr(34) & chr(10)
+	strLabel = strLabel & "A102,275,0,4,1,1,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_ADDRESS2")) & chr(34) & chr(10)
+	strLabel = strLabel & "A102,308,0,4,1,1,N," & chr(34) & Trim(strCityStateZip) & chr(34) & chr(10)
+	
+	strLabel = strLabel & "A99,365,0,2,1,2,N," & Chr(34) & "CARTON" & chr(34) & chr(10)
+	strLabel = strLabel & "A213,365,0,2,1,2,N," & chr(34) & Trim(intPackage) & chr(34) & chr(10)
+	strLabel = strLabel & "A274,365,0,2,1,2,N," & chr(34) & "OF" & chr(34) & chr(10)
+	strLabel = strLabel & "A343,365,0,2,1,2,N," & chr(34) & Trim(intTotalPackages) & chr(34) & chr(10)
+	
+	strLabel = strLabel & "LO2,403,810,9" & vbCrLf
+	strLabel = strLabel & "A128,414,0,3,2,2,N," & chr(34) & "SELECTED FREIGHT" & chr(34) & chr(10)
+	strLabel = strLabel & "A106,461,0,1,1,2,N," & chr(34) & "TRACKING NUMBER" & chr(34) & chr(10)
+	strLabel = strLabel & "B168,489,0,1,2,0,223,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/TRACKING_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "A179,726,0,3,1,2,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/TRACKING_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,762,806,9" & vbCrLf
+	strLabel = strLabel & "B223,788,0,1,4,0,61,N," & chr(34) &  Trim(sh.e(ReprintPrefix & "//CMS/CSTM_PO_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "A238,841,0,2,1,2,N," & chr(34) & "PO #:" & chr(34) & chr(10)
+	strLabel = strLabel & "A238,860,0,2,1,2,N," & chr(34) &  Trim(sh.e(ReprintPrefix & "//CMS/CSTM_PO_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,890,810,4" & vbCrLf
+	strLabel = strLabel & "A35,896,0,4,1,1,N," & chr(34) & "SSCC" & chr(34) & chr(10)
+	strLabel = strLabel & "B128,926,0,1,4,0,203,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "A229,1168,0,3,1,2,N," & chr(34) & Trim(strHumanReadableUCC) & chr(34) & chr(10)
+	strLabel = strLabel & "P1" & vbCrLf
+	
+	'msgBox strLabel 
+	
+	SaveAsFile strLabel,strDestPrinter
+	
+End Function
+
+Function PrintJCPENNEYSUCCLabel(strDestPrinter, SH, ReprintPrefix, intPackage, intTotalPackages)
+	'========================================================================
+	' This function builds a JCPENNEYS UCC Container label and sends it to printer
+	'========================================================================
+
+	strCityStateZip = Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_CITY")) & "  " & _
+					  Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_STATE")) & "  " & _
+					  Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE"))
+
+	strHumanReadableUCC = "(" & Left(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),2) & ")" & _
+						  Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),3,18)
+
+	strLabel = "N" & vbCrLf
+	strLabel = strLabel & "A41,9,0,2,1,2,N," & chr(34) & "FROM:" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,46,0,1,1,2,N," & chr(34) & "PAIC " & chr(34) & chr(10)
+	strLabel = strLabel & "A35,74,0,1,1,2,N," & chr(34) & "3500 N WINDSON DRIVE" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,103,0,1,1,2,N," & chr(34) & "SUITE 400" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,133,0,1,1,2,N," & chr(34) & "AURORA  CO  80011" & chr(34) & chr(10)
+	strLabel = strLabel & "LO314,0,4,389" & vbCrLf
+	strLabel = strLabel & "A357,9,0,2,1,2,N," & chr(34) & "SHIP TO:" & chr(34) & chr(10)
+	
+	strLabel = strLabel & "A668,9,0,4,1,1,N," & chr(34) & Trim(intPackage) & chr(34) & chr(10)
+	strLabel = strLabel & "A711,9,0,4,1,1,N," & chr(34) & "OF" & chr(34) & chr(10)
+	strLabel = strLabel & "A767,9,0,4,1,1,N," & chr(34) & Trim(intTotalPackages) & chr(34) & chr(10)
+	
+	strLabel = strLabel & "A353,46,0,4,1,1,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_COMPANY")) & chr(34) & chr(10)
+	strLabel = strLabel & "A355,76,0,4,1,1,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_ADDRESS1")) & chr(34) & chr(10)
+	strLabel = strLabel & "A355,107,0,4,1,1,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_ADDRESS2")) & chr(34) & chr(10)
+	strLabel = strLabel & "A355,137,0,4,1,1,N," & chr(34) & Trim(strCityStateZip) & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,176,812,4" & vbCrLf
+	strLabel = strLabel & "A35,190,0,4,1,1,N," & chr(34) & "SHIP TO POST" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,230,0,4,1,1,N," & chr(34) & "(420) " & Mid(Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE")),1,5)  & chr(34) & chr(10)
+	strLabel = strLabel & "B35,272,0,1,3,0,102,N," & chr(34) & "420" & Mid(Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE")),1,5) & chr(34) & chr(10)
+	strLabel = strLabel & "A331,198,0,3,2,2,N," & chr(34) & "PO :" & chr(34) & chr(10)
+	strLabel = strLabel & "A465,198,0,3,2,2,N," & chr(34) &  Trim(sh.e(ReprintPrefix & "//CMS/CSTM_PO_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "A331,289,0,3,2,2,N," & chr(34) & "SUB:   686" & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,387,812,4" & vbCrLf
+	strLabel = strLabel & "LO0,569,812,4" & vbCrLf
+	strLabel = strLabel & "A193,586,0,4,1,1,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_STORE_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "A35,586,0,4,1,1,N," & chr(34) & "FOR (91)" & chr(34) & chr(10)
+	strLabel = strLabel & "B35,633,0,1,3,0,122,N," & chr(34) & "91" & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_STORE_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "LO424,573,4,195" & vbCrLf
+	strLabel = strLabel & "LO0,766,810,4" & vbCrLf
+	strLabel = strLabel & "A45,789,0,2,1,2,N," & chr(34) & "SERIAL SHIPPING CONTAINER CODE" & chr(34) & chr(10)
+	strLabel = strLabel & "A138,839,0,3,1,2,N," & chr(34) & Trim(strHumanReadableUCC) & chr(34) & chr(10)
+	strLabel = strLabel & "B122,897,0,1,4,0,244,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "P1" & vbCrLf
+
+	'msgBox strLabel 
+	
+	SaveAsFile strLabel,strDestPrinter
+	
+End Function
+
+Function PrintTARGETUCCLabel(strDestPrinter, SH, ReprintPrefix, intPackage, intTotalPackages)
+	'========================================================================
+	' This function builds a TARGET UCC Container label and sends it to printer
+	'========================================================================
+
+	strCityStateZip = Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_CITY")) & "  " & _
+					  Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_STATE")) & "  " & _
+					  Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE"))
+
+	strHumanReadableUCC = "(" & Left(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),2) & ")" & _
+						  Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),3,18)
+
+	strLabel = "N" & vbCrLf
+	strLabel = strLabel & "A43,9,0,2,1,2,N," & chr(34) & "FROM:" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,46,0,1,1,2,N," & chr(34) & "PAIC " & chr(34) & chr(10)
+	strLabel = strLabel & "A35,74,0,1,1,2,N," & chr(34) & "3500 N WINDSON DRIVE" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,103,0,1,1,2,N," & chr(34) & "SUITE 400" & chr(34) & chr(10)
+	strLabel = strlabel & "A35,133,0,1,1,2,N," & chr(34) & "AURORA  CO 80011" & chr(34) & chr(10)
+	strLabel = strLabel & "LO314,0,4,389" & vbCrLf
+	strLabel = strLabel & "A357,9,0,2,1,2,N," & chr(34) & "SHIP TO:" & chr(34) & chr(10)
+	
+	strLabel = strLabel & "A668,9,0,4,1,1,N," & chr(34) & Trim(intPackage) & chr(34) & chr(10)
+	strLabel = strLabel & "A711,9,0,4,1,1,N," & chr(34) & "OF" & chr(34) & chr(10)
+	strLabel = strLabel & "A767,9,0,4,1,1,N," & chr(34) & Trim(intTotalPackages) & chr(34) & chr(10)
+	
+	strLabel = strLabel & "A355,46,0,4,1,1,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_COMPANY")) & chr(34) & chr(10)
+	strLabel = strLabel & "A355,76,0,4,1,1,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_ADDRESS1")) & chr(34) & chr(10)
+	strLabel = strLabel & "A355,107,0,4,1,1,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_ADDRESS2")) & chr(34) & chr(10)
+	strLabel = strLabel & "A355,137,0,4,1,1,N," & chr(34) & Trim(strCityStateZip) & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,176,812,4" & vbCrLf
+	strLabel = strLabel & "A35,190,0,1,1,2,N," & chr(34) & "SHIP TO POSTAL CODE" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,230,0,4,1,1,N," & chr(34) & "(420) " & Mid(Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE")),1,5)  & chr(34) & chr(10)
+	strLabel = strLabel & "B35,266,0,1,3,0,102,N," & chr(34) & "420" & Mid(Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE")),1,5) & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,387,812,4" & vbCrLf
+	strLabel = strLabel & "A35,419,0,3,2,2,N," & chr(34) & "PO :" & chr(34) & chr(10)
+	strLabel = strLabel & "A173,419,0,3,2,2,N," & chr(34) &  Trim(sh.e(ReprintPrefix & "//CMS/CSTM_PO_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "A35,482,0,3,2,2,N," & chr(34) & "DPCI:" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,543,0,3,2,2,N," & chr(34) & "Casepack:" & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,618,812,4" & vbCrLf
+	strLabel = strLabel & "A35,677,0,3,2,2,N," & chr(34) & "Style:" & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,766,810,4" & vbCrLf
+	strLabel = strLabel & "A35,781,0,3,1,2,N," & chr(34) & "Serial Shipping Container Code" & chr(34) & chr(10)
+	strLabel = strLabel & "A138,831,0,3,1,2,N," & chr(34) & Trim(strHumanReadableUCC) & chr(34) & chr(10)
+	strLabel = strLabel & "B112,901,0,1,4,0,244,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "P1" & vbCrLf
+
+	'msgBox strLabel
+	
+	SaveAsFile strLabel,strDestPrinter
+	
+End Function
+
+Function ParseCarrierforUCCLabel(strUCCLabelCarrier, strShipMethodDescription)
+	'=========================================================================
+	' This function will take ship method description from customer and find first a space. 
+	' That will be carrier used to print on Customer compliant labels;
+	'=========================================================================
+	
+	'Finds first space in carier descrioption
+	intFirstSpace = Instr(1,strShipMethodDescription," ")
+	
+	'Extracts carrier name 
+	strUCCLabelCarrier = Mid(strShipMethodDescription, 1, intFirstSpace - 1)
+
+End Function
+
+Function PrintSKUTYPE1Label(strDestPrinter, SH, ReprintPrefix)
+	'========================================================================
+	' This function builds a SKU Type 1 label and sends it to printer
+	'========================================================================
+	
+	intPackLines = SH.ElementExists(ReprintPrefix & "//COMMON/PACK/POOL/LINE")
+
+	For SkuItems = 1 to intPackLines
+		strLabel = "N" & vbCrLf
+		strLabel = strLabel & "A20,10,0,4,2,2,N," & chr(34) & "P/C #: " & Trim(SH.E(ReprintPrefix & "//COMMON/PACK/POOL/LINE["& SkuItems &"]/PACK_ITEMID")) & Chr(34) & Chr(10)
+		strLabel = strLabel & "A20,110,0,4,2,2,N," & chr(34) & "QTY: " & Trim(SH.E(ReprintPrefix & "//COMMON/PACK/POOL/LINE["& SkuItems &"]/PACK_QUANTITY")) & Chr(34) & Chr(10)
+		strLabel = strLabel & "A20,210,0,4,2,2,N," & Chr(34) & "SKU #: " & Trim(SH.E(ReprintPrefix & "//COMMON/PACK/POOL/LINE["& SkuItems &"]/PACK_SKU")) & Chr(34) & Chr(10)
+		strLabel = strLabel & "A20,310,0,4,2,2,N," & chr(34) & "PO #: " & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_PO_NUMBER")) & chr(34) & chr(10)
+		strLabel = strLabel & "A20,410,0,4,2,2,N," & Chr(34) & "UPC #: " & Trim(SH.E(ReprintPrefix & "//COMMON/PACK/POOL/LINE["& SkuItems &"]/PACK_PRINT_UPC")) & Chr(34) & Chr(10)
+		strLabel = strLabel & "P1" & vbCrLf
+		
+		SaveAsFile strLabel,strDestPrinter
+	Next
+	
+End Function
+
+Function PrintSKUTYPE2Label(strDestPrinter, SH, ReprintPrefix)
+	'========================================================================
+	' This function builds a SKU Type 2 label and sends it to printer
+	'========================================================================
+	
+	intPackLines = SH.ElementExists(ReprintPrefix & "//COMMON/PACK/POOL/LINE")
+
+	For SkuItems = 1 to intPackLines
+		strLabel = "N" & vbCrLf
+		strLabel = strLabel & "A20,10,0,4,2,2,N," & chr(34) & "P/C #: " & Trim(SH.E(ReprintPrefix & "//COMMON/PACK/POOL/LINE["& SkuItems &"]/PACK_ITEMID")) & Chr(34) & Chr(10)
+		strLabel = strLabel & "A20,110,0,4,2,2,N," & chr(34) & "QTY: " & Trim(SH.E(ReprintPrefix & "//COMMON/PACK/POOL/LINE["& SkuItems &"]/PACK_QUANTITY")) & Chr(34) & Chr(10)
+		strLabel = strLabel & "A20,210,0,4,2,2,N," & Chr(34) & "SKU #: " & Trim(SH.E(ReprintPrefix & "//COMMON/PACK/POOL/LINE["& SkuItems &"]/PACK_SKU")) & Chr(34) & Chr(10)
+		strLabel = strLabel & "A20,310,0,4,2,2,N," & chr(34) & "PO #: " & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_PO_NUMBER")) & chr(34) & chr(10)
+		strLabel = strLabel & "A20,410,0,4,2,2,N," & Chr(34) & "UPC #: " & Trim(SH.E(ReprintPrefix & "//COMMON/PACK/POOL/LINE["& SkuItems &"]/PACK_PRINT_UPC")) & Chr(34) & Chr(10)
+		strLabel = strLabel & "A20,510,0,4,2,2,N," & Chr(34) & "STORE #: " & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_STORE_NUMBER")) & chr(34) & chr(10)
+		strLabel = strLabel & "A20,610,0,4,2,2,N," & Chr(34) & "DEPT #: " & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_DEPARTMENT")) & chr(34) & chr(10)
+		strLabel = strLabel & "A20,710,0,4,2,2,N," & Chr(34) & "DELV #: " & Trim(sh.e(ReprintPrefix & "//COMMON/SHIPPER_REFERENCE")) & chr(34) & chr(10)
+		strLabel = strLabel & "A20,810,0,4,2,2,N," & Chr(34) & "Comment(s) : " & Chr(34) & Chr(10) 
+		strLabel = strLabel & "A20,860,0,4,2,2,N," & Chr(34) & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_SKU_LABEL_COMMENT1")) & chr(34) & chr(10)
+		strLabel = strLabel & "A20,910,0,4,2,2,N," & Chr(34) & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_SKU_LABEL_COMMENT2")) & chr(34) & chr(10)
+		strLabel = strLabel & "A20,960,0,4,2,2,N," & Chr(34) & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_SKU_LABEL_COMMENT3")) & chr(34) & chr(10)
+		strLabel = strLabel & "P1" & vbCrLf	
+		
+		SaveAsFile strLabel,strDestPrinter
+	Next
+	
+End Function
+
+
+Function PrintACADEMYUCCLabel(strDestPrinter, SH, ReprintPrefix, intPackage, intTotalPackages)
+	'========================================================================
+	' This function builds a ACADEMY UCC Container label and sends it to printer
+	'========================================================================
+
+	'Builds string of (City, State, Zip)
+	strCityStateZip = Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_CITY")) & "  " & _
+					  Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_STATE")) & "  " & _
+					  Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE"))
+	
+	'Builds string of human readable Package UCC Number
+	strHumanReadableUCC = "(" & Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),1,2) & ")" & " " & _
+						  Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),3,1) & " " & _
+						  Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),4,7) & " " & _
+						  Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),11,9) & " " & _
+						  Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),20,1)
+					  
+	'Code calls function to parse out carrier name
+	strShipMethodDescription = Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_SHIPMETHOD_DESCRIPTION"))
+	Call ParseCarrierforUCCLabel(strUCCLabelCarrier, strShipMethodDescription)
+
+	strLabel = "N" & vbCrLf
+	strLabel = strLabel & "A35,9,0,2,1,2,N," & Chr(34) & "FROM:" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,46,0,1,1,2,N," & Chr(34) & "PAIC" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,74,0,1,1,2,N," & Chr(34) & "3500 N WINDSON DRIVE" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,103,0,1,1,2,N," & Chr(34) & "SUITE 400" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,133,0,1,1,2,N," & Chr(34) & "AURORA  CO 80011" & chr(34) & chr(10)
+	strLabel = strLabel & "LO314,0,4,389" & vbCrLf
+	strLabel = strLabel & "A357,9,0,2,1,2,N," & Chr(34) & "SHIP TO:" & chr(34) & chr(10)
+	strLabel = strLabel & "A355,48,0,1,1,2,N," & chr(34) & sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_COMPANY") & chr(34) & chr(10)
+	strLabel = strLabel & "A355,76,0,1,1,2,N," & chr(34) & sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_ADDRESS1") & chr(34) & chr(10)
+	strLabel = strLabel & "A355,107,0,1,1,2,N," & chr(34) & sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_ADDRESS2") & chr(34) & chr(10)
+	strLabel = strLabel & "A355,137,0,1,1,2,N," & Chr(34) & strCityStateZip & chr(34) & chr(10)
+	
+	strLabel = strLabel & "A668,9,0,4,1,1,N," & chr(34) & Trim(intPackage) & chr(34) & chr(10)
+	strLabel = strLabel & "A711,9,0,4,1,1,N," & chr(34) & "OF" & chr(34) & chr(10)
+	strLabel = strLabel & "A767,9,0,4,1,1,N," & chr(34) & Trim(intTotalPackages) & chr(34) & chr(10)
+	
+	strLabel = strLabel & "LO0,176,812,4" & vbCrlf
+	strLabel = strLabel & "A35,190,0,4,1,1,N," & Chr(34) & "COMMENTS" & chr(34) & chr(10)
+	strLabel = strLabel & "A329,192,0,4,1,1,N," & Chr(34) & "CARRIER:" & chr(34) & chr(10)
+	strLabel = strLabel & "A512,192,0,4,1,1,N," & chr(34) & Trim(strUCCLabelCarrier) & chr(34) & chr(10)
+	strLabel = strLabel & "A333,257,0,4,1,1,N," & Chr(34) & "PRO #" & chr(34) & chr(10)
+	strLabel = strLabel & "A333,334,0,4,1,1,N," & Chr(34) & "B/L:" & chr(34) & chr(10)
+	strLabel = strLabel & "A481,334,0,4,1,1,N," & Chr(34) & Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/TRACKING_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,387,812,4" & vbCrLf
+	strLabel = strLabel & "A35,409,0,3,1,2,N," & Chr(34) & "PO  #:" & chr(34) & chr(10)
+	strLabel = strLabel & "A175,409,0,3,1,2,N," &  Chr(34) & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_PO_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "A35,462,0,3,1,2,N," & Chr(34) & "Style:" & chr(34) & chr(10)
+	strLabel = strLabel & "A175,462,0,3,1,2,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//COMMON/PACK/BOX[NUMBER=" & intPackage & "]/LINE[1]/PACK_ITEMID")) & chr(34) & chr(10)
+	strLabel = strLabel & "A404,462,0,3,1,2,N," & Chr(34) & "Quantity:" & chr(34) & chr(10)
+	strLabel = strLabel & "A579,462,0,3,1,2,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//COMMON/PACK/BOX[NUMBER=" & intPackage & "]/LINE[1]/PACK_QUANTITY")) & chr(34) & chr(10)
+	strLabel = strLabel & "A404,513,0,3,1,2,N," & Chr(34) & "Carton: " & chr(34) & chr(10)
+	strLabel = strLabel & "A579,513,0,3,1,2,N," & chr(34) & Trim(intPackage) & chr(34) & chr(10)
+	strLabel = strLabel & "A664,513,0,3,1,2,N," & Chr(34) & "OF" & chr(34) & chr(10)
+	strLabel = strLabel & "A757,513,0,3,1,2,N," & chr(34) & Trim(intTotalPackages) & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,569,812,4" & vbCrLf
+	strLabel = strLabel & "A35,578,0,3,1,2,N," & Chr(34) & "UPC" & Chr(34) & Chr(10)
+	strLabel = strLabel & "A122,608,0,3,1,2,N," & Chr(34) & Trim(SH.E(ReprintPrefix & "//COMMON/PACK/POOL/LINE[1]/PACK_PRINT_UPC")) & Chr(34) & Chr(10)
+	strLabel = strLabel & "B108,644,0,1,2,0,102,N," & Chr(34) & Trim(SH.E(ReprintPrefix & "//COMMON/PACK/POOL/LINE[1]/PACK_PRINT_UPC")) & Chr(34) & Chr(10)
+	strLabel = strLabel & "LO424,573,4,195" & vbCrLf
+	strLabel = strLabel & "A457,592,0,1,2,3,N," & Chr(34) & "STORE:" & chr(34) & chr(10)
+	strLabel = strLabel & "A587,592,0,1,2,3,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_STORE_NUMBER"))& chr(34) & chr(10)
+	strLabel = strLabel & "LO0,766,810,4"  & vbCrLf
+	strLabel = strLabel & "A162,839,0,3,1,2,N," & chr(34) & Trim(strHumanReadableUCC) & chr(34) & chr(10)
+	strLabel = strLabel & "B122,897,0,1,4,0,244,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "P1" & vbCrLf
+
+	'msgBox strLabel 
+	
+	SaveAsFile strLabel,strDestPrinter
+	
+End Function
+Function GetShipperInfo() ' pj 10_16_2008
+	'========================================================================
+	' This subroutine reads System XML to find Valid shippers that are used
+	' being used.
+	'========================================================================
+	Set ndlS = sys.dd.SelectNodes("//SHIPPERS/SHIPPER")
+	Counter = 1
+	For each nodS in ndlS
+		ShipperString = nodS.SelectSingleNode("SYMBOL").text
+		pCN.execute("replace into Shipperlocations (shipper) values ('" & shipperstring & "')" ) 
+	Next
+End Function	
+
+Function GetServices() ' 10_18_2008
+	'=========================================================================
+	' This subroutine creates an Excel Spreadsheet of carrier services that customer
+	' has been configured on their system. This subroutine is called from User menu
+	' on shipping screen. It also 
+	'=========================================================================
+	Set ndlS = sys.dd.SelectNodes("//SERVICES/SERVICE")
+	For each nodS in ndlS
+		serviceString = nodS.SelectSingleNode("SYMBOL").text
+		strSymbol = nodS.SelectSingleNode("SYMBOL").text
+		'rem the following line out if you only want symbols
+		Set nodP = nodS.SelectSingleNode("PLAINTEXT")
+		strDesc = nodP.text
+		If not nodP is nothing Then
+			serviceString = serviceString & "," & nodP.text & "," 
+		Else
+			serviceString = serviceString & "No Description" & ","
+		End If 
+
+		Query = "Replace into BWTIService (SERVICE, Description) values ('" & StrSymbol & "', '" & StrDesc & "')"
+		pcn.execute Query
+	Next
+End Function
+
+Function TotalPackageWeight(intTotalPackageWeight)
+	'=========================================================================
+	' This subroutine reads each PACKAGE node in shipment adds field WEIGHT to a variable
+	' that we can past back to our customers system.
+	'=========================================================================
+
+	For intPackage = 1 to Shipment.TP	
+		intTotalPackageWeight = intTotalPackageWeight + CNum(s.e("SHIPMENT/PACKAGE[" & intPackage  & "]/WEIGHT"))
+	Next
+
+End Function
+
+Function MR_Search_Void(XMLIn)
+	'======================================================================
+	' This function gets called HISTORYRIGHTCLICK.PSS and allows operator to
+	' void BWTI_LTL and BWTI_MR shipments in ProShip. Proship doesn't 
+	' have an engine for Truck and Manually Rated carries.
+	'======================================================================
+	
+	'Make new XML interpreter & load with search query request
+	Set DD = CreateObject("MSXML2.DomDocument.4.0")
+	DD.LoadXML(XMLIN)
+ 
+ 	'SaveAsFile XMLIN & VbCrLf, "c:\XMLIN.txt"
+ 
+	'This will run for both search and void, pick out the right one:
+	If DD.documentElement.nodeName = "SEARCHOPEN" Then
+ 
+		'Determine if this is a search or a detail request
+		If DD.SelectNodes("//INCLUDE").Length = 0 Then
+			'This is a detail request. Show everything for 1 record
+			Set N = DD.SelectSingleNode("//KEY")
+			If Not N Is Nothing Then
+				PkgId = N.Text
+				MsgBox Pkgid
+				SQL = "SELECT * From PACKAGES WHERE GMSN = " & pkgid & ""
+				Set RS = pCN2.Execute(sql & sqlwc)
+				If Not RS.Eof Then
+					For Each F in RS.Fields
+						Resp = Resp & "<" & ucase(f.name) & ">" & cstr(f.value & "") &  "</" & ucase(f.name)& ">"
+					Next	
+					Resp = "<PACKAGE><KEY>" & pkgid & "</KEY>" & resp & "</PACKAGE>"
+				End If
+			End If	
+			MR_SEARCH_VOID = Resp
+			Exit Function
+		Else
+			'This is a search request...
+			'We will get our results dynamically from the Query statement against CSTM(History) table
+			Query = "SELECT PackageId, TrackingNumber, ConsigneeCompany FROM Cstm.History " & _
+					"WHERE Carrier = 'LTL' AND "
+ 
+			'Now add criteria
+			Set Nz  = DD.SelectNodes("//FILTER/*")
+			For Each N in Nz
+				Select Case N.NodeName
+					Case "TRACKING_NUMBER"
+						Query = Query & "TRACKINGNUMBER = '" & N.Text & "' AND " 
+					Case "SHIPPER_REFERENCE"
+						Query = Query & "PACKAGEID = '" & N.Text & "' AND " 					
+					Case "SHIPDATE"
+						Query = Query & "SHIPDATE = '" & N.Text & "' AND " 
+				End Select		
+			Next 
+			Set Nz = Nothing
+			
+			'Cut trailing 'AND' from criteria
+			Query = Left(Query,Len(Query) - 4)
+			
+			'Run Query
+			Set rsHistory = pCN.Execute(Query)
+ 
+			'Build response that will display on screen.
+			Do While Not rsHistory.Eof
+				Resp = Resp & "<PACKAGE><KEY>" & rsHistory.Fields("TrackingNumber") & "</KEY>" & _ 
+					"<CONSIGNEE_NAME>" & rsHistory.Fields("ConsigneeCompany") & "</CONSIGNEE_NAME>" & _  
+					"<SHIPPER_REFERENCE>" & rsHistory.Fields("PackageId") & "</SHIPPER_REFERENCE></PACKAGE>"  
+
+				rsHistory.MoveNext
+			Loop	
+			Resp = "<RESULT ID='KEY'>" & Resp & "</RESULT>"
+			MR_SEARCH_VOID = Resp
+			Exit function
+			
+		End If 
+		
+	Else
+		'void the package. This version of Proship runs the AllowVoid script 
+		' for MR packages as well, which kills the entry out of the table
+		' we are querying; thus we don't need to do it here as well.
+	End If
+	
+	'Code empties recordset
+	Set rsHistory = Nothing
+End Function
+
+Function FixConsigneeAccount(MyValue)
+	'=========================================================================
+	' This functions removes (Space, Pound Sign, and Dash) from consingee account number.
+	'=========================================================================
+	
+	MyValue = Replace(MyValue," ","")
+	MyValue = Replace(MyValue,"-","")
+	MyValue = Replace(MyValue,"#","")
+	
+End Function
+
+Function BlankoutNodes()
+	' added 12/8/2008 to clear out nodes jeff is too lazy to do
+	S.e("/SHIPMENT/COMMON/BASE") = 0.00
+	S.e("/SHIPMENT/COMMON/COD_FEE")= 0.00
+	S.e("/SHIPMENT/COMMON/FUEL_SURCHARGE")= 0.00
+	S.e("/SHIPMENT/COMMON/TOTAL") = 0.00
+	S.e("/SHIPMENT/COMMON/DISCOUNT") = 0.00
+	S.e("/SHIPMENT/COMMON/SPECIAL") = 0.00
+	S.e("/SHIPMENT/COMMON/HAZMAT_FEE") = 0.00
+	S.e("/SHIPMENT/COMMON/RESIDENTIAL_FEE") = 0.00
+	S.e("/SHIPMENT/COMMON/EXTENDED_AREA_FEE") = 0.00
+	S.e("/SHIPMENT/COMMON/ADDITIONAL_HANDLING_FEE") = 0.00
+	S.e("/SHIPMENT/COMMON/DECLARED_VALUE_FEE") = 0.00
+	S.e("/SHIPMENT/COMMON/OVERSIZE_FEE") = 0.00
+	S.e("/SHIPMENT/COMMON/PROOF_FEE") = 0.00
+	S.e("/SHIPMENT/COMMON/RESIDENTIAL_DELIVERY_FEE") = 0.00
+	S.e("/SHIPMENT/COMMON/HANDLING_FEE") = 0.00
+	IF S.ELEMENTEXISTS("SHIPMENT/PACKAGE[1]/COMMITMENT_TIME") > 0 THEN 
+		s.e("SHIPMENT/PACKAGE[1]/COMMITMENT_TIME") = 0
+	END IF
+	IF S.ELEMENTEXISTS("SHIPMENT/CMS/CSTM_COMMITMENT_TIME") > 0 THEN 
+		s.e("SHIPMENT/CMS/CSTM_COMMITMENT_TIME") = 0
+		s.e("SHIPMENT/CMS/CSTM_EXPECTEDDELIVERY") = "" 
+	END IF
+	
+End Function
+
+Function BuildHazardComboBox()
+	'========================================================================
+	' This function reads through CSTM(Hazard) table and creates a combo box for
+	' screen field Cstm_Hazmat_ID. Also reads through CSTM(Codes) table and creates
+	' a combo box for screen field Hazmat_Packing
+	'========================================================================
+	'Remove any old customerid lists, if they exist
+	Set N = SYS.DD.SelectSingleNode("/SYSTEM/CSTM_HAZMATID")
+	If Not N is Nothing then N.parentnode.removechild(N)
+	'
+	'Now loop and populate a new child node
+	Cnt=1
+	
+	Query = "SELECT Stock_Number, Dot_Name1 FROM Hazard ORDER BY Stock_Number"
+	
+	SET rsHazard = pCN.Execute(Query)
+	
+	Do While Not rsHazard.EOF
+		strStockNumber = RPad(Trim(rsHazard.Fields("Stock_Number"))," ",10) 
+		strDotNameAll = Space(02) & Trim(rsHazard.Fields("Dot_Name1"))
+		
+		SYS.E("/SYSTEM/CSTM_HAZMATID[" & cnt & "]/PLAINTEXT") = strDotNameAll
+		SYS.E("/SYSTEM/CSTM_HAZMATID[" & cnt & "]/SYMBOL") = strStockNumber
+		Cnt = Cnt + 1
+		rsHazard.MoveNext
+	Loop
+	
+	'Code empties recordset
+	Set rsHazard = Nothing
+
+	'Remove any old customerid lists, if they exist
+	Set N = SYS.DD.SelectSingleNode("/SYSTEM/HAZMAT_PACKING")
+	If Not N is Nothing then N.parentnode.removechild(N)
+	'
+	'Now loop and populate a new child node
+	Cnt=1
+	
+	Query = "SELECT Code_Type, Code_Code, Code_Description FROM Codes " & _
+			"WHERE Code_Type = 'HAZCONTAIN' ORDER BY Code_Code"
+	
+	SET rsCodes = pCN.Execute(Query)
+	
+	Do While Not rsCodes.EOF
+		strCode = RPad(Trim(rsCodes.Fields("Code_Code"))," ",10) 
+		strDescription = Space(02) & Trim(rsCodes.Fields("Code_Description"))
+		
+		SYS.E("/SYSTEM/HAZMAT_PACKING[" & cnt & "]/SYMBOL") = strCode
+		SYS.E("/SYSTEM/HAZMAT_PACKING[" & cnt & "]/PLAINTEXT") = strDescription
+
+		Cnt = Cnt + 1
+		rsCodes.MoveNext
+	Loop
+	
+	'Code empties recordset
+	Set rsCodes = Nothing	
+
+End Function
+
+Function CalculateASAPRates()
+	'========================================================================
+	' This function takes Consignee Zip code and gets zone from CSTM(ASAPZone)
+	' Then takes zone and gets rates from CSTM(ASAPRates) 
+	'========================================================================
+	NUMBEROFBOXES = SHIPMENT.TP
+	CurrentBox = Shipment.CP
+	
+	blnZoneFound = False
+	sys.UserGlobal("ZipCodeFound") = "False" 
+	strZip = Left(Trim(S.e("SHIPMENT/COMMON/CONSIGNEE_POSTALCODE")),5)
+	intWeight = Round(CNum(S.e("SHIPMENT/PACKAGE[" & CurrentBox & "]/WEIGHT")),0)
+	
+	'Writes package weight to billed weight when shipping LTL or MR. 
+	S.E("SHIPMENT/COMMON/BILLED_WEIGHT") = S.E("SHIPMENT/PACKAGE/WEIGHT")
+	
+	Query = "Select Zip, ZipEnd, Zone " & _
+			"FROM ASAPZone ORDER BY Zip"
+	
+	Set rsASAPzoneTable = pCN.execute(Query)
+
+	If rsASAPZoneTable.eof Then
+		'Code displays error message if record not found.
+		strErrorMessage = "Table CSTM(ASAPZone) not found is Empty"
+		strWindowName = "Table Problem - UserScripts.CalculateASAPRates"
+		strWindowButtons = vbInformation + vbOkOnly
+		MsgBox strErrorMessage,strWindowButtons,strWindowName
+	Else
+		'Moves to first record in recordset
+		rsASAPZoneTable.MoveFirst
+		
+		'Runs until out of records in recordset
+		Do While Not rsASAPZoneTable.eof
+			
+			'Checks if Consingee Zip code is with in beginning and ending zip. If so gets zone and
+			'exits Do While
+			If strZip => Trim(rsASAPZoneTable.Fields("Zip").value & "") _
+				And strZip <= Trim(rsASAPZoneTable.Fields("ZipEnd").value & "") Then
+				
+				'Stores Zone from CSTM(ASAPZone) table
+				strZone = Trim(rsASAPZoneTable.Fields("Zone").value & "")
+				S.E("SHIPMENT/COMMON/ZONE") = Trim(rsASAPZoneTable.Fields("zone").value & "")
+				blnZoneFound = True
+				sys.UserGlobal("ZipCodeFound") = "True" 
+				Exit Do
+
+			End If
+			
+			'Moves to next record in recordset
+			rsASAPZoneTable.MoveNext
+		Loop
+		
+		'Code displays error message to operator if zip code not found in CSTM(SpeeDeeZone) table
+		If blnZoneFound = False Then
+			'Code displays error message if record not found.
+			strErrorMessage = "ASAP does not Deliver to Zip Code  " & strZip & vbCrLf & _
+							  "Please check CSTM(ASAPZone) Table"
+			strWindowName = "Zip Code not Found - User_Scripts.CalculateASAPRates"
+			strWindowButtons = vbInformation + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			Exit Function
+		End If
+		
+		Query = "Select Zone, Weight, Rate " & _
+				"FROM SpeeDeeRate " & _
+				"WHERE Zone = '" & Trim(strZone) & "'" & _
+				"And Weight = '" & intWeight & "'"
+		
+		Set rsASAPRateTable = pCN.execute(Query)
+
+		If rsASAPRateTable.eof Then
+			'Code displays error message if record not found.
+			strErrorMessage = "Zone  " & Trim(strZone) & " Or Weight  " & intWeight & vbCrLF & _
+							  "not found in CSTM(ASAPRate) Table. Please check table"
+			strWindowName = "Zone or Weight not Found - User_Scripts.CalculateASAPRates"
+			strWindowButtons = vbInformation + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+		Else
+	
+			'Gets Rate calculate current shipping charge.
+			intCalculatedRate = CNum(Trim(rsASAPRateTable.Fields("Rate").value & ""))
+			s.e("SHIPMENT/PACKAGE[" & CurrentBox & "]/PACKAGEBASERATE") = intCalculatedRate
+			's.e("SHIPMENT/COMMON/FUEL_SURCHARGE") = intCalculatedRate * 
+						
+			's.e("SHIPMENT/COMMON/TOTAL") = intCalculatedRate + CNum(s.e("SHIPMENT/COMMON/SPECIAL"))
+			TotalBase = 0
+			FOR PACKAGE = 1 TO NUMBEROFBOXES
+				
+				IF S.ELEMENTEXISTS("SHIPMENT/PACKAGE[" & PACKAGE & "]/PACKAGEBASERATE") > 0 THEN 
+					TotalBase  = TotalBase + S.E("SHIPMENT/PACKAGE[" & PACKAGE & "]/PACKAGEBASERATE")
+				end if
+			NEXT
+			s.e("SHIPMENT/COMMON/BASE") = TotalBase
+			
+			hazFee = 0.00
+			FOR PACKAGE = 1 TO NUMBEROFBOXES
+				IF S.ELEMENTEXISTS("SHIPMENT/PACKAGE[" & PACKAGE & "]/HAZMAT_ITEM/CSTM_HAZMATID") > 0 THEN   
+					'IF CNUM(S.E("SHIPMENT/PACKAGE[" & PACKAGE & "]/HAZMAT_ITEM/CSTM_HAZMATID")) > 0 THEN
+						hazFee = hazFee + 10.00
+					'END IF
+				END IF
+			NEXT
+			S.E("SHIPMENT/COMMON/HAZMAT_FEE") = FORMATNUMBER(hazFee,2,,,0)
+			
+			
+			
+			S.e("/SHIPMENT/COMMON/FUEL_SURCHARGE")= round(CNUM(s.e("SHIPMENT/COMMON/BASE")) * .12,2)
+			s.e("SHIPMENT/COMMON/SPECIAL") = formatnumber(cnum(s.e("SHIPMENT/COMMON/SPECIAL")) + cnum(S.e("/SHIPMENT/COMMON/FUEL_SURCHARGE")) + HazFee,2,,,0)
+			s.e("SHIPMENT/COMMON/TOTAL") = TotalBase + CNum(s.e("SHIPMENT/COMMON/SPECIAL"))
+			
+			S.E("SHIPMENT/COMMON/COD_FEE") = 0.00
+			FOR PACKAGE = 1 TO NUMBEROFBOXES
+				IF S.ELEMENTEXISTS("SHIPMENT/PACKAGE[" & PACKAGE & "]/COD_AMOUNT") > 0 THEN   
+					IF CNUM(S.E("SHIPMENT/PACKAGE[" & PACKAGE & "]/COD_AMOUNT")) > 0 THEN
+						S.E("SHIPMENT/COMMON/COD_FEE") = ROUND(CNUM(S.E("SHIPMENT/COMMON/COD_FEE")) + 9.00,2)
+					END IF
+				END IF
+			NEXT
+			
+	
+		End If
+	End If
+	
+	'Codes empties recordset
+	Set rsASAPZoneTable = Nothing
+	Set rsASAPZoneTable = Nothing
+
+End Function
+
+Function CalculateCrossCountryRates
+	'========================================================================
+	' This function takes Consignee Zip code and gets zone and rates from 
+	' CSTM(CrossCountryZone) table. We use this table to figure out rate for
+	' LTL carrier CrossCountry.
+	'========================================================================
+	sys.UserGlobal("ZipCodeFound") = "False" 
+	strZip = Left(Trim(S.e("SHIPMENT/COMMON/CONSIGNEE_POSTALCODE")),5)
+	
+	Query = "Select * FROM CROSSCOUNTRYZONES WHERE " & _
+			"DESTINATIONZIP = '" & strZip & "'"
+	
+	Set rsRate = pCN.execute(Query)
+
+	If rsRate.eof Then
+		'Code displays error message if record not found.
+		strErrorMessage = "Carrier does not Deliver to Zip Code  " & strZip
+		strWindowName = "Zip Code not Found - Nelson.GetCrossCountryRates"
+		strWindowButtons = vbInformation + vbOkOnly
+		MsgBox strErrorMessage,strWindowButtons,strWindowName
+ 
+		'PreShipShipment = "Carrier does not Deliver to Zip Code" & vbcrlf & "Shipment Cancelled"  
+		
+	Else
+		S.E("SHIPMENT/COMMON/ZONE") = rsRate.Fields("zone").value
+		
+		'Writes package weight to billed weight when shipping LTL or MR. 
+		TotalWeight = 0
+		For Package = 1 to shipment.TP
+			TotalWeight = TotalWeight + S.E("SHIPMENT/PACKAGE[" & Package & "]/WEIGHT")
+		next
+
+		S.E("SHIPMENT/COMMON/BILLED_WEIGHT") = TotalWeight
+		NUMBEROFBOXES = SHIPMENT.TP
+		FOR PACKAGE = 1 TO NUMBEROFBOXES
+			TotalhazMatFee = 0
+			IF S.ELEMENTEXISTS("SHIPMENT/PACKAGE[" & PACKAGE & "]/HAZMAT_ITEM/CSTM_HAZMATID") > 0 THEN 
+				TotalhazMatFee  = TotalhazMatFee + 7
+			end if
+		NEXT
+	
+		S.E("SHIPMENT/COMMON/HAZMAT_FEE") = TotalhazMatFee
+			
+		'Gets weight, cost per pound, and minimum charge to calculate current shipping charge.
+		intWeight = CNum(S.E("SHIPMENT/COMMON/BILLED_WEIGHT"))
+		intRate = CNum(rsRate.Fields("Costperpound").value)
+		intMinCharge =  CNum(rsRate.Fields("minimumcharge").value)
+		intCalculatedRate = intWeight * intRate
+		
+		sys.UserGlobal("ZipCodeFound") = "True"
+		
+		'Compares to see if shipping charges are less than minimum charges 
+		If intCalculatedRate < intMinCharge Then
+			s.e("SHIPMENT/COMMON/BASE") = formatnumber(intMinCharge,2,,,0)
+			s.e("SHIPMENT/COMMON/TOTAL") = intMinCharge + CNum(s.e("SHIPMENT/COMMON/SPECIAL"))
+		Else
+			s.e("SHIPMENT/COMMON/BASE") = formatnumber(intCalculatedRate,2,,,0)
+			s.e("SHIPMENT/COMMON/TOTAL") = intCalculatedRate + CNum(s.e("SHIPMENT/COMMON/SPECIAL"))
+		End if	
+	
+		S.e("/SHIPMENT/COMMON/FUEL_SURCHARGE")= formatnumber(round(CNUM(s.e("SHIPMENT/COMMON/BASE")) * .215,2),2,,,0)
+		s.e("SHIPMENT/COMMON/SPECIAL") = formatnumber(cnum(s.e("SHIPMENT/COMMON/SPECIAL")) + cnum(S.e("/SHIPMENT/COMMON/FUEL_SURCHARGE")),2,,,0)
+		s.e("SHIPMENT/COMMON/TOTAL") = formatnumber(CNum(s.e("SHIPMENT/COMMON/BASE"))+ CNum(s.e("SHIPMENT/COMMON/SPECIAL")),2,,,0)
+	
+	End If
+	
+	'Codes empties recordset
+	Set rsRate = Nothing
+
+End Function
+
+Function CalculateDeliveryCommitment(cmttime, mandate, SaturdayFlag, newCmtDate, newCmtTime) 
+	'11-3-08 pj
+	'=========================================================================
+	'This is a generic function for updating history and turns ps_commitmenttime and Manifest date into appropriate values
+	' requires CALENDAR table or it will not work. We go thru 6 days and look for weekend and holidays
+	'=========================================================================
+	' 10 minute increments passed from PS_Commmitmenttime, turn into minutes "n"
+	
+	' initialize variables for transit time 
+	cmttime = cmttime * 10		
+	'Add minutes to date
+	newCmtdatetime = dateadd("n", cmttime, mandate)
+	' if midnight, sebtract 7 hours, if after 5pm, add 17 hours for next day delivery time 
+	if datepart("h",newCmtdatetime) = 0 then
+		newCmtdatetime = dateadd("h", -7, newCmtdatetime)
+	end if
+	if datepart("h",newCmtdatetime) > 17 then
+		newCmtdatetime = dateadd("h", 17, newCmtdatetime)
+	end if
+	' CONVERT TIME INTO A STRING	
+	if datepart("n",newcmtdatetime) = 0 then 
+		lcMin = "00"
+	else
+		lcMin= datepart("n",newcmtdatetime)
+	end if
+	newcmttime = datepart("h",newcmtdatetime) &":" & lcMin
+	
+	' Put date into mySQL format and look in Calendar for weekend and holiday days
+	newcmtdate = CElse(newCmtdatetime, "yyyy-mm-dd")
+	' Select next 6 days
+	ssql = "select date, is_holiday, is_weekday, Day_name "
+	ssql = ssql & "from calendar where date >= '" & newcmtdate & "' "  
+	ssql = ssql & "and date < '" & CElse(dateadd("d", 8, newcmtdate), "yyyy-mm-dd")  & "' order by date"
+	set rs2 = pcn.execute(ssql)
+	' set default parameters for loop
+	Foundit = "False"
+	WeekendDays = 0
+	Holidaydays = 0
+
+	if not rs2.eof then 
+		do while Foundit = "False"
+			if rs2.eof then ' cant find it and we went thru all the possible dates to check foo weekend and holidays
+				Foundit = "True"
+			end if
+		
+			testDate = rs2.fields("date").value
+			testholiday = rs2.fields("is_holiday").value
+			testweekday = rs2.fields("is_weekday").value
+			testDayName = rs2.fields("day_name").value
+			
+			If SaturdayFlag = "Y" then 
+				if testDayName = "Saturday" then
+					newcmtdate = cElse(testdate, "yyyy-mm-dd")	
+					Foundit = "True"
+					'msgbox "foundit"
+				else
+					rs2.movenext
+				end if
+			else
+				if testholiday = 1 or testweekday = 0 then
+					if testholiday  = 1 then
+						Holidaydays = Holidaydays + 1
+					end if
+					if testweekday  = 0 then
+						WeekendDays = WeekendDays + 1
+					end if
+				rs2.movenext
+				else
+					newcmtdate = cElse(testdate, "yyyy-mm-dd")	
+					Foundit = "True"
+				end if
+			end if
+		
+		loop
+	' Convert it back into mysql format
+	newcmtdate = cElse(testdate, "yyyy-mm-dd")	
+	end if
+	
+	rs2.close
+	set rs2 = nothing
+
+End Function
+
+Function CalculateSpeeDeeRates()
+	'========================================================================
+	' This function takes Consignee Zip code and gets zone from CSTM(SpeeDeeZone)
+	' Then takes zone and gets rates from CSTM(SpeeDeeRates) 
+	'========================================================================
+    NUMBEROFBOXES = SHIPMENT.TP
+	CurrentBox = Shipment.CP
+	
+	blnZoneFound = False
+	sys.UserGlobal("ZipCodeFound") = "False"
+	strZip = Left(Trim(S.e("SHIPMENT/COMMON/CONSIGNEE_POSTALCODE")),5)
+	intWeight = Round(CNum(S.e("SHIPMENT/PACKAGE[" & CurrentBox & "]/WEIGHT")),0)
+	
+	'Writes package weight to billed weight when shipping LTL or MR. 
+	
+	S.E("SHIPMENT/COMMON/BILLED_WEIGHT") = S.E("SHIPMENT/PACKAGE/WEIGHT")
+	
+	Query = "Select Zip, ZipEnd, Zone, CommitmentTime " & _
+			"FROM SpeeDeeZone ORDER BY Zip"
+	
+	Set rsSpeeDeeZoneTable = pCN.execute(Query)
+
+	If rsSpeeDeeZoneTable.eof Then
+		'Code displays error message if record not found.
+		strErrorMessage = "Table CSTM(SpeeDeeZone) not found is Empty"
+		strWindowName = "Table Problem - UserScripts.CalculateSpeeDeeRates"
+		strWindowButtons = vbInformation + vbOkOnly
+		MsgBox strErrorMessage,strWindowButtons,strWindowName
+	Else
+		'Moves to first record in recordset
+		rsSpeeDeeZoneTable.MoveFirst
+		
+		'Runs until out of records in recordset
+		Do While Not rsSpeeDeeZoneTable.eof
+			
+			'Checks if Consingee Zip code is with in beginning and ending zip. If so gets zone and
+			'exits Do While
+			If strZip => Trim(rsSpeeDeeZoneTable.Fields("Zip").value & "") _
+				And strZip <= Trim(rsSpeeDeeZoneTable.Fields("ZipEnd").value & "") Then
+				
+				'Stores Zone from CSTM(SpeeDeeZone) table
+				strZone = Trim(rsSpeeDeeZoneTable.Fields("Zone").value & "")
+				S.E("SHIPMENT/COMMON/ZONE") = Trim(rsSpeeDeeZoneTable.Fields("zone").value & "")
+				S.e("SHIPMENT/PACKAGE/COMMITMENT_TIME") = Trim(rsSpeeDeeZoneTable.Fields("CommitmentTime").value)
+				
+				blnZoneFound = True
+				sys.UserGlobal("ZipCodeFound") = "True"
+			
+				Exit Do
+
+			End If
+			
+			'Moves to next record in recordset
+			rsSpeeDeeZoneTable.MoveNext
+		Loop
+		
+		'Code displays error message to operator if zip code not found in CSTM(SpeeDeeZone) table
+		If blnZoneFound = False Then
+			'Code displays error message if record not found.
+			strErrorMessage = "Spee Dee does not Deliver to Zip Code  " & strZip & vbCrLf & _
+							  "Please check CSTM(SpeeDeeZone) Table"
+			strWindowName = "Zip Code not Found - User_Scripts.CalculateSpeeDeeRates"
+			strWindowButtons = vbInformation + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+			Exit Function
+		End If
+		
+		Query = "Select Zone, Weight, Rate " & _
+				"FROM SpeeDeeRate " & _
+				"WHERE Zone = '" & Trim(strZone) & "'" & _
+				"And Weight = '" & intWeight & "'"
+		
+		Set rsSpeeDeeRateTable = pCN.execute(Query)
+
+		If rsSpeeDeeRateTable.eof Then
+			'Code displays error message if record not found.
+			strErrorMessage = "Zone  " & Trim(strZone) & " Or Weight  " & intWeight & vbCrLF & _
+							  "not found in CSTM(SpeeDeeRate) Table. Please check table"
+			strWindowName = "Zone or Weight not Found - User_Scripts.CalculateSpeeDeeRates"
+			strWindowButtons = vbInformation + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+		Else
+			
+			'Gets Rate calculate current shipping charge.
+			intCalculatedRate = CNum(Trim(rsSpeeDeeRateTable.Fields("Rate").value & ""))
+			'msgbox("curbox " & CurrentBox & " of " & NUMBEROFBOXES)
+			
+			s.e("SHIPMENT/PACKAGE[" & CurrentBox & "]/PACKAGEBASERATE") = intCalculatedRate
+			TotalBase = 0
+			FOR PACKAGE = 1 TO NUMBEROFBOXES
+				
+				IF S.ELEMENTEXISTS("SHIPMENT/PACKAGE[" & PACKAGE & "]/PACKAGEBASERATE") > 0 THEN 
+					TotalBase  = TotalBase + S.E("SHIPMENT/PACKAGE[" & PACKAGE & "]/PACKAGEBASERATE")
+				end if
+			NEXT
+			s.e("SHIPMENT/COMMON/BASE") = TotalBase
+			hazFee = 0.00
+			FOR PACKAGE = 1 TO NUMBEROFBOXES
+				IF S.ELEMENTEXISTS("SHIPMENT/PACKAGE[" & PACKAGE & "]/HAZMAT_ITEM/CSTM_HAZMATID") > 0 THEN   
+					'IF CNUM(S.E("SHIPMENT/PACKAGE[" & PACKAGE & "]/HAZMAT_ITEM/CSTM_HAZMATID")) > 0 THEN
+						hazFee = hazFee + 15.00
+					'END IF
+				END IF
+			NEXT
+			S.E("SHIPMENT/COMMON/HAZMAT_FEE") = FORMATNUMBER(hazFee,2,,,0)
+			
+			'Code checks for Call tag  turned on for SpeeDee. If so then adds UPS Call Tag fee to special services fee
+			If S.E("SHIPMENT/PACKAGE[1]/RETURN_DELIVERY_METHOD") > "0" Then
+				CallTagFee = 6.00
+			Else
+				CallTagFee = 0.00
+			End If
+			
+			S.e("/SHIPMENT/COMMON/FUEL_SURCHARGE")= round(CNUM(s.e("SHIPMENT/COMMON/BASE")) * .0475,2)
+			s.e("SHIPMENT/COMMON/SPECIAL") = CNum(S.e("/SHIPMENT/COMMON/FUEL_SURCHARGE")) + hazFee + CallTagFee
+			s.e("SHIPMENT/COMMON/TOTAL") = TotalBase + CNum(s.e("SHIPMENT/COMMON/SPECIAL"))
+			
+			S.E("SHIPMENT/COMMON/COD_FEE") = 0.00
+			FOR PACKAGE = 1 TO NUMBEROFBOXES
+				IF S.ELEMENTEXISTS("SHIPMENT/PACKAGE[" & PACKAGE & "]/COD_AMOUNT") > 0 THEN   
+					IF CNUM(S.E("SHIPMENT/PACKAGE[" & PACKAGE & "]/COD_AMOUNT")) > 0 THEN
+						S.E("SHIPMENT/COMMON/COD_FEE") = ROUND(CNUM(S.E("SHIPMENT/COMMON/COD_FEE")) + 7.00,2)
+					END IF
+				END IF
+			NEXT
+	
+		End If
+	End If
+	
+	'Codes empties recordset
+	Set rsSpeeDeeZoneTable = Nothing
+	Set rsSpeeDeeZoneTable = Nothing
+
+End Function
+
+Function CheckDuplicateID(ShipperRef, OKToContinue)
+		'Code checks for duplicate shipments in CSTM History table. Displays error message and forces operator to
+		'VOID shipment before re-shipping.
+	'	 msgbox " ok" & id
+
+End Function
+
+Function DisplayRates(CalledFrom)
+
+	strText = "Total:" & S.e("/SHIPMENT/COMMON/TOTAL") &_
+	 " BASE:" & S.e("/SHIPMENT/COMMON/BASE") &_
+	 " SPEC:" & S.e("/SHIPMENT/COMMON/SPECIAL") &_
+	" DISC:" & 	S.e("/SHIPMENT/COMMON/DISCOUNT") & VBCRLF &_
+	" codfee: " & S.e("/SHIPMENT/COMMON/COD_FEE") &_
+	" FUEL:" & S.e("/SHIPMENT/COMMON/FUEL_SURCHARGE") &_
+	" HAZ:" & S.e("/SHIPMENT/COMMON/HAZMAT_FEE") &_
+	" RES:" &	S.e("/SHIPMENT/COMMON/RESIDENTIAL_FEE") &_
+	" EXT:" & S.e("/SHIPMENT/COMMON/EXTENDED_AREA_FEE") &_
+	" ADDLHAND:" &	S.e("/SHIPMENT/COMMON/ADDITIONAL_HANDLING_FEE") & VBCRLF &_
+	" DV:" & S.e("/SHIPMENT/COMMON/DECLARED_VALUE_FEE") &_
+	" OVS: " & S.e("/SHIPMENT/COMMON/OVERSIZE_FEE") &_
+	" PROOF:" & S.e("/SHIPMENT/COMMON/PROOF_FEE") & VBCRLF& VBCRLF &_
+	"called from: " & calledfrom
+
+	MsgBox(strTEXT)
+End Function
+
+Function FindAccessorials(CurrentShipper, Fuel, Haz, Res, Cod)
+	'========================================================================
+	' This subroutine reads System XML to find accessorials that goes with Shipper
+	' being used.
+	'========================================================================
+	
+	REM <SYMBOL>BWTI_LTL.LTL.SPEEDEE(ND)</SYMBOL> 
+	  REM <PLAINTEXT>(SDS) Spee Dee - Shipment Services</PLAINTEXT> 
+	  REM <USE_RATE_METHOD /> 
+	  REM <PRONUM_ASIGNMENT STYLE="STANDARD" LOW_WARNING="100" PREFIX="" SUFFIX="1.66" CHECKDIGIT="NONE">SPEE</PRONUM_ASIGNMENT> 
+	  REM <ABS_MIN TYPE="FLAT">0.00</ABS_MIN> 
+	  REM <DISCOUNT TYPE="PERCENT" /> 
+	  REM <FUEL_SURCHARGE BASIS="BASE">6.75</FUEL_SURCHARGE> 
+	  REM <HAZMAT_FEE MINIMUM="" BASIS="NONE">10</HAZMAT_FEE> 
+	  REM <APPOINTMENT_DELIVERY_FEE MINIMUM="" BASIS="NONE">0</APPOINTMENT_DELIVERY_FEE> 
+	  REM <RESIDENTIAL_FEE MINIMUM="" BASIS="NONE">0</RESIDENTIAL_FEE> 
+	  REM <INSIDE_DELIVERY_FEE MINIMUM="" BASIS="NONE">0</INSIDE_DELIVERY_FEE> 
+	  REM <LIFTGATE_FEE MINIMUM="" BASIS="NONE">0</LIFTGATE_FEE> 
+	  REM <SATURDAY_DELIVERY_FEE MINIMUM="" BASIS="NONE">0</SATURDAY_DELIVERY_FEE> 
+	  REM <COD_FEE MINIMUM="7.00" BASIS="FLAT">7.00</COD_FEE> 
+	Set ndlS = sys.dd.SelectNodes("//SHIPPERS/SHIPPER")
+	Counter = 1
+
+	For each nodS in ndlS
+		ShipperString = nodS.SelectSingleNode("SYMBOL").text
+		
+		'Code gets shippers zip code from System XML File
+		If Trim(ShipperString) = CurrentShipper Then
+			FUEL = Sys.E("//SHIPPERS/SHIPPER[" & Counter & "]/SERVICE/FUEL_SURCHARGE")
+			HAZ = Sys.E("//SHIPPERS/SHIPPER[" & Counter & "]/SERVICE/HAZMAT_FEE")
+			RES = Sys.E("//SHIPPERS/SHIPPER[" & Counter & "]/SERVICE/RESIDENTIAL_FEE")
+			COD = Sys.E("//SHIPPERS/SHIPPER[" & Counter & "]/SERVICE/COD_FEE")
+		End If
+
+		Counter = Counter + 1
+	Next
+	Set ndlS = nothing
+End Function
+
+Function FixField(myField)
+	'========================================================================
+	' This code looks at strfield. Converts ' or "" to space and passes back converted field
+	'========================================================================
+	myField = Replace(myField, "\", "-")
+	myField = Replace(myField, "'", chr(96))
+	myField = Replace(myField, chr(34), chr(96))
+	myField = Replace(myField, ")", "\)")
+	myField = Replace(myField, "(", "\(")
+	
+End Function
+
+FUNCTION GetNodeTotal(NodeName, NodeAmount)
+	' gets total amounts from nodes 
+
+End Function
+
+Function LookupHazard(strHazardID, CurrentPackage )
+	'======================================================================
+	' This function gets called whenever Hazmat_ID field on Hazmat shipping screen 
+	'======================================================================
+
+	Query = "SELECT Stock_Number, Dot_Name1, Dot_Name2, Dot_Name3, " & _
+		    "Dot_Name4, Dot_Name5, Hazard_ID, Label_Type, Hazard_Class, " & _
+		    "Contact, Phone, AskVol, Pack_Group, Hazard_Note, Container, DotName_All " & _
+		    "FROM CSTM.Hazard WHERE Stock_Number = '" & UCase(Trim(strHazardID)) & "'"
+	
+	Set rsHazard = pCN.Execute(Query)
+	
+	If rsHazard.eof Then
+		'Code displays error message if Hazmat_ID not found in CSTM(Hazard) table
+		strErrorMessage = "HazmatID  " &  UCase(Trim(strHazardID)) & "  not found in CSTM(Hazard) table" & Vbcrlf & _
+						  "Please verify HazardID"
+						  
+		strWindowName = "No Record Found - User_scripts.LookupHazard"
+		MsgBox strErrorMessage,vbInformation + vbOkOnly, strWindowName
+	Else
+		'Code populates ProShip hazmat fields
+		s.e("SHIPMENT/PACKAGE[" & CurrentPackage & "]/HAZMAT_ITEM/HAZMAT_DESCRIPTION") = UCase(Trim(rsHazard.Fields("DotName_All").value & "" ))
+		s.e("SHIPMENT/PACKAGE[" & CurrentPackage & "]/HAZMAT_ITEM/HAZMAT_ID") = UCase(Trim(rsHazard.Fields("Hazard_ID").value & "" ))
+		s.e("SHIPMENT/COMMON/HAZMAT_EMERG_PHONE") = Trim(rsHazard.Fields("Phone").value & "" )
+		s.e("SHIPMENT/PACKAGE[" & CurrentPackage & "]/HAZMAT_ITEM/HAZMAT_CLASS") = Trim(rsHazard.Fields("Hazard_Class").value & "" )
+
+		If Trim(rsHazard.Fields("Pack_Group").value & "" ) = "I" Then
+			s.e("SHIPMENT/PACKAGE[" & CurrentPackage & "]/HAZMAT_ITEM/HAZMAT_PACKING_GROUP") = "1"
+		ElseIf Trim(rsHazard.Fields("Pack_Group").value & "" ) = "II" Then
+			s.e("SHIPMENT/PACKAGE[" & CurrentPackage & "]/HAZMAT_ITEM/HAZMAT_PACKING_GROUP") = "2"
+		ElseIf Trim(rsHazard.Fields("Pack_Group").value & "" ) = "III" Then
+			s.e("SHIPMENT/PACKAGE[" & CurrentPackage & "]/HAZMAT_ITEM/HAZMAT_PACKING_GROUP") = "3"
+		End If
+	End If
+
+	'Code empties recordset
+	Set rsHazard = Nothing
+
+End Function
+
+Function RoundCurrency(myNumber)
+	'========================================================================
+	' Fixes rounding error in VB Script as it would round according to the hundredth 
+	' digit being odd or even
+	'========================================================================
+	
+	mynumber = Round(myNumber,3)
+	myTextNumber = Right(Trim(cstr(myNumber)),1)
+	If MyTextNumber = "5" then
+		myNumber = Round(Mynumber +.01,2)
+	Else
+		myNumber = Round(Mynumber,2)		
+	End if
+
+End Function
+
+Function ReadXLSTable()
+	'========================================================================
+	'  This table is used to calculate an additional discount on freight 
+	'NOTE- First row needs to be field names
+	'========================================================================
+
+	' READ xls IMPORT FILE	SAMPLE!!!!!
+	'
+	Set pCN3 = CreateObject("ADODB.CONNECTION")	
+	pCN3.ConnectionString ="Provider=Microsoft.Jet.OLEDB.4.0;Data Source=" & _
+							"F:\shipdata\discount\discount.xls" & ";" & _
+							"Extended Properties=""Excel 8.0;HDR=Yes;"";"
+
+
+	pCN3.Open	
+	Set rsdata = pCN3.execute("Select * from [sheet1$]")
+	do while not rsData.eof
+
+		territory = (rsdata.fields("territory").value)
+		discount = (rsdata.fields("Percentage").value)
+		'msgbox (discount)
+		ssql = "replace into discounttable set " & _
+				"Territory = '" & Territory &  "', " & _
+				"discount = " & discount & " "
+		pcn.execute(ssql)
+		rsdata.movenext	
+	loop
+
+	set pcN3 = nothing
+		
+End Function
+
+Function PrintAAFESUCCLabel(strDestPrinter, SH, ReprintPrefix, intPackage, intTotalPackages)
+	'========================================================================
+	' This function builds a AAFES UCC Container label and sends it to printer
+	'========================================================================
+
+	strCityStateZip = Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_CITY")) & "  " & _
+					  Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_STATE")) & "  " & _
+					  Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE"))
+					  
+	strHumanReadableUCC = "(" & Left(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),2) & ")" & _
+						  Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),3,18)
+						  
+	'Code calls function to parse out carrier name
+	strShipMethodDescription = Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_SHIPMETHOD_DESCRIPTION"))
+	Call ParseCarrierforUCCLabel(strUCCLabelCarrier, strShipMethodDescription)
+
+	strLabel = "N" & vbCrLf
+	strLabel = strLabel & "A35,9,0,2,1,2,N," & chr(34) & "FROM:" & chr(34) & Chr(10)
+	strLabel = strLabel & "A35,46,0,1,1,2,N," & chr(34) & "PAIC " & chr(34) & chr(10)
+	strLabel = strLabel & "A35,74,0,1,1,2,N," & chr(34) & "3500 N WINDSON DRIVE" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,103,0,1,1,2,N," & chr(34) & "SUITE 400" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,133,0,1,1,2,N," & chr(34) & "AURORA  CO  80011" & chr(34) & chr(10)
+	strLabel = strLabel & "A357,9,0,2,1,2,N," & chr(34) & "SHIP TO:" & chr(34) & chr(10)
+	strLabel = strLabel & "A355,46,0,4,1,1,N," & chr(34) & sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_COMPANY") & chr(34) & chr(10)
+	strLabel = strLabel & "A355,76,0,4,1,1,N," & chr(34) & sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_ADDRESS1") & chr(34) & chr(10)
+	strLabel = strLabel & "A355,106,0,4,1,1,N," & chr(34) & sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_ADDRESS2") & chr(34) & chr(10)
+	strLabel = strlabel & "A355,137,0,4,1,1,N," & chr(34) & strCityStateZip & chr(34) & chr(10)
+
+	strLabel = strLabel & "A668,9,0,4,1,1,N," & chr(34) & Trim(intPackage) & chr(34) & chr(10)
+	strLabel = strLabel & "A711,9,0,4,1,1,N," & chr(34) & "OF" & chr(34) & chr(10)
+	strLabel = strLabel & "A767,9,0,4,1,1,N," & chr(34) & Trim(intTotalPackages) & chr(34) & chr(10)
+	
+	strLabel = strLabel & "LO314,0,4,389" & vbCrLf
+	strLabel = strLabel & "LO0,176,812,4" & vbCrLf
+	strLabel = strLabel & "A35,190,0,4,1,1,N," & chr(34) & "SHIP TO POST" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,230,0,4,1,1,N," & chr(34) & "(420) " & Mid(Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE")),1,5) & chr(34) & chr(10)
+	strLabel = strLabel & "B35,266,0,1,3,0,102,N," & chr(34) & "420" & Mid(Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE")),1,5) & chr(34) & chr(10)
+	strLabel = strlabel & "A349,192,0,2,1,2,N," & chr(34) & "CARRIER:" & chr(34) & Chr(10)
+	strLabel = strLabel & "A349,239,0,3,2,2,N," & chr(34) & Trim(strUCCLabelCarrier) & chr(34) & chr(10)
+	strLabel = strLabel & "A349,287,0,2,1,2,N," & chr(34) & "PRO:" & chr(34) & chr(10)
+	strLabel = strLabel & "A477,287,0,2,1,2,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/TRACKING_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "A349,334,0,2,1,2,N," & chr(34) & "B/L:" & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,387,812,4" & vbCrLf
+	strlabel = strLabel & "A35,409,0,3,2,2,N," & chr(34) & "DEPT :  50" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,462,0,3,2,2,N," & chr(34) & "PO  :" & chr(34) & chr(10)
+	strLabel = strLabel & "A205,462,0,3,2,2,N," & chr(34) &  Trim(sh.e(ReprintPrefix & "//CMS/CSTM_PO_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "A35,511,0,3,2,2,N," & chr(34) & "CARTON #" & chr(34) & chr(10)
+	strLabel = strLabel & "A355,511,0,3,2,2,N," & chr(34) & Trim(intPackage) & chr(34) & chr(10)
+	strLabel = strLabel & "A432,511,0,3,2,2,N," & chr(34) & "OF" & chr(34) & chr(10)
+	strLabel = strLabel & "A554,509,0,3,2,2,N," & chr(34) & Trim(intTotalPackages) & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,569,812,4" & vbCrLF
+	strLabel = strLabel & "A35,586,0,4,1,1,N," & Chr(34) & "STORE CODE:(91)" & chr(34) & chr(10)
+	strLabel = strLabel & "A278,586,0,4,1,1,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_STORE_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "B35,633,0,1,3,0,122,N," & chr(34) & "91" & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_STORE_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "LO424,573,4,195" & vbCrLf
+	strLabel = strLabel & "A438,586,0,4,1,1,N," & chr(34) & "FOR:" & chr(34) & chr(10)
+	strLabel = strLabel & "A436,657,0,2,3,4,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_STORE_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,766,810,4" & vbCrLf 
+	strLabel = strLabel & "A35,789,0,2,1,2,N," & chr(34) & "SSCC-18" & chr(34) & chr(10)
+	strLabel = strLabel & "A152,839,0,3,1,2,N," & chr(34) & Trim(strHumanReadableUCC) & chr(34) & chr(10)
+	strLabel = strLabel & "B122,897,0,1,4,0,244,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "A41,295,0,3,1,1,N," & vbCrLf
+	strLabel = strLabel & "P1" & vbCrLf
+	
+	'msgBox strLabel 
+	
+	SaveAsFile strLabel,strDestPrinter
+	
+End Function
+
+Function PrintMEIJERUCCLabel(strDestPrinter, SH, ReprintPrefix, intPackage, intTotalPackages)
+	'========================================================================
+	' This function builds a MEIJER UCC Container label and sends it to printer
+	'========================================================================
+
+	strCityStateZip = Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_CITY")) & "  " & _
+					  Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_STATE")) & "  " & _
+					  Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE"))
+					  
+	strHumanReadableUCC = "(" & Left(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),2) & ")" & _
+						  Mid(Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")),3,18)
+						  
+	'Code calls function to parse out carrier name
+	strShipMethodDescription = Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_SHIPMETHOD_DESCRIPTION"))
+	Call ParseCarrierforUCCLabel(strUCCLabelCarrier, strShipMethodDescription)
+
+	strLabel = "N" & vbCrLf
+	strLabel = strLabel & "A43,9,0,2,1,2,N," & chr(34) & "FROM:" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,46,0,1,1,2,N," & chr(34) & "PAIC " & chr(34) & chr(10)
+	strLabel = strLabel & "A35,74,0,1,1,2,N," & chr(34) & "3500 N WINDSON DRIVE" & chr(34) & chr(10)
+	strLabel = strLabel & "A35,103,0,1,1,2,N," & chr(34) & "SUITE 400" & chr(34) & chr(10)
+	strLabel = strlabel & "A35,133,0,1,1,2,N," & chr(34) & "AURORA  CO 80011" & chr(34) & chr(10)	
+	
+	strLabel = strLabel & "LO329,0,4,178" & vbCrLf
+	strLabel = strLabel & "A345,9,0,2,1,2,N," & chr(34) & "CARRIER:" & chr(34) & chr(10)
+	strLabel = strLabel & "A508,9,0,4,1,1,N," & chr(34) & Trim(strUCCLabelCarrier) & chr(34) & chr(10)
+	strLabel = strLabel & "A345,56,0,2,1,2,N," & chr(34) & "PRO #" & chr(34) & chr(10)
+	strLabel = strLabel & "A345,105,0,2,1,2,N," & chr(34) & "B/L:" & chr(34) & chr(10)
+	strLabel = strLabel & "A508,105,0,4,1,1,N," & Chr(34) & Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/TRACKING_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,176,812,4" & vbCrLf
+	strLabel = strLabel & "A43,203,0,2,1,2,N," & chr(34) & "SHIP TO:" & chr(34) & chr(10)
+	strLabel = strLabel & "A193,203,0,2,1,2,N," & chr(34) & sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_COMPANY") & chr(34) & chr(10)
+	strLabel = strLabel & "A193,244,0,2,1,2,N," & chr(34) & sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_ADDRESS1") & chr(34) & chr(10)
+	strLabel = strLabel & "A193,284,0,2,1,2,N," & chr(34) & sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_ADDRESS2") & chr(34) & chr(10)
+	strLabel = strLabel & "A193,325,0,2,1,2,N," & chr(34) & Trim(strCityStateZip) & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,387,812,4" & vbCrLf
+	strLabel = strLabel & "A43,432,0,2,1,2,N," & chr(34) & "(420) " & Mid(Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE")),1,5) & chr(34) & chr(10)
+	strLabel = strLabel & "B45,487,0,1,3,0,102,N," & chr(34) & "420" & Mid(Trim(sh.e(ReprintPrefix & "//COMMON/CONSIGNEE_POSTALCODE")),1,5) & chr(34) & chr(10)
+	strLabel = strLabel & "LO381,388,4,212" & vbCrLf
+	strLabel = strLabel & "A396,406,0,2,1,2,N," & chr(34) & "DEPT:" & chr(34) & chr(10)
+	strLabel = strLabel & "A548,406,0,2,1,2,N," & chr(34) & sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_DEPARTMENT") & Chr(34) & Chr(10)
+	strLabel = strLabel & "A396,467,0,2,1,2,N," & chr(34) & "PO  #:" & chr(34) & chr(10)
+	strLabel = strLabel & "A548,467,0,2,1,2,N," & chr(34) &  Trim(sh.e(ReprintPrefix & "//CMS/CSTM_PO_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "A396,528,0,2,1,2,N," & chr(34) & "STORE:" & chr(34) & chr(10)
+	strLabel = strLabel & "A548,528,0,2,1,2,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//CMS/CSTM_CUSTOMER_STORE_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "LO0,602,812,4" & vbCrLf
+	strLabel = strLabel & "LO0,766,810,4" & vbCrLf
+	strLabel = strLabel & "A127,799,0,3,1,2,N," & chr(34) & "(00) SERIAL SHIPPING CONTAINER" & chr(34) & chr(10)
+	strLabel = strLabel & "A157,858,0,2,1,2,N," & chr(34) & Trim(strHumanReadableUCC) & chr(34) & chr(10)
+	strLabel = strLabel & "B112,906,0,1,4,0,244,N," & chr(34) & Trim(sh.e(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_UCC_NUMBER")) & chr(34) & chr(10)
+	strLabel = strLabel & "P1" & vbCrLf
+	
+	SaveAsFile strLabel,strDestPrinter
+	
+End Function
+
+Function BuildFreightForwarderComboBox()
+	'========================================================================
+	' This function reads through CSTM(Customer) table and creates a combo box for
+	' BOL screen field Freight Fowarder.
+	'========================================================================
+	'Remove any old FreightForwarderid lists, if they exist
+	Set N = SYS.DD.SelectSingleNode("/SYSTEM/CSTM_BOL_FREIGHT_FORWARDER_ID")
+	If Not N is Nothing then N.parentnode.removechild(N)
+	 
+	'Now loop and populate a new child node
+	Cnt=1
+	SET rsFreightForwarder = pCN.Execute("SELECT CustomerID, CustomerName FROM Customer ORDER BY CustomerName")
+	Do While Not rsFreightForwarder.EOF
+		'strCustomerID = Mid(Trim(rsCustomer.Fields("CustomerID")),1,15) & Space(02)
+		strFreightForwarderName = Trim(rsFreightForwarder.Fields("CustomerName"))
+		
+		'SYS.E("/SYSTEM/CSTM_CUSTOMERID[" & cnt & "]/PLAINTEXT") = strCustomerName
+		SYS.E("/SYSTEM/CSTM_BOL_FREIGHT_FORWARDER_ID[" & cnt & "]/SYMBOL") = strFreightForwarderName
+		Cnt = Cnt + 1
+		rsFreightForwarder.MoveNext
+	Loop
+	
+	'Code empties recordset
+	Set rsFreightForwarder = Nothing
+
+End Function
+
+Function LookupFreightForwarder()
+	'======================================================================
+	' This function gets called whenever Freight Fowarder field on BOL screen 
+	' changes.
+	'======================================================================
+	
+	'Code sets defaults
+	strFreightForwarderName = Trim(S.E("SHIPMENT/CMS/BOL/CSTM_BOL_FREIGHT_FORWARDER_ID"))
+	chkShipToCode = Trim(S.E("SHIPMENT/CMS/BOL/CSTM_BOL_SHIPTO_CODE"))
+	chkBillToCode = Trim(S.E("SHIPMENT/CMS/BOL/CSTM_BOL_BILLTO_CODE"))
+	
+	Query = "SELECT CustomerID, CustomerName, CustomerContact, CustomerAddress1, " & _
+		    "CustomerAddress2, CustomerAddress3, CustomerCity, CustomerState, " & _
+		    "CustomerZip, CustomerZip, CustomerPhone, CustomerCountry, ResidentialFlag, " & _
+			"DefaultPaymentType, UPSAccountNumber, FedExAccountNumber " & _
+		    "FROM CSTM.Customer WHERE CustomerName = '" & UCase(Trim(strFreightForwarderName)) & "'"
+	
+	Set rsCustomer = pCN.Execute(Query)
+	
+	If rsCustomer.eof Then
+		'Code displays error message if CustomerID not found in CSTM(Customer) table
+		strErrorMessage = "Customer Name  " &  UCase(Trim(strFreightForwarderName)) & "  not found in CSTM(Customer) table" & Vbcrlf & _
+						  "Please verify Customer Name"
+						  
+		strWindowName = "No Record Found - User_scripts.CustomerLookup"
+		MsgBox strErrorMessage,vbInformation + vbOkOnly, strWindowName
+	Else
+		If chkShiptoCode = "True" Then
+			'Code populates ProShip fields
+			s.e("SHIPMENT/COMMON/CONSIGNEE_COMPANY") = UCase(Trim(rsCustomer.Fields("CustomerName").value & "" ))
+			s.e("SHIPMENT/COMMON/CONSIGNEE_CONTACT") = UCase(Trim(rsCustomer.Fields("CustomerContact").value & "" ))
+			s.e("SHIPMENT/COMMON/CONSIGNEE_ADDRESS1") = UCase(Trim(rsCustomer.Fields("CustomerAddress1").value & ""))
+			s.e("SHIPMENT/COMMON/CONSIGNEE_ADDRESS2") = UCase(Trim(rsCustomer.Fields("CustomerAddress2").value & ""))
+			s.e("SHIPMENT/COMMON/CONSIGNEE_CITY") = UCase(Trim(rsCustomer.Fields("CustomerCity").value & ""))
+			s.e("SHIPMENT/COMMON/CONSIGNEE_STATE") = UCase(Trim(rsCustomer.Fields("CustomerState").value & ""))
+			s.e("SHIPMENT/COMMON/CONSIGNEE_POSTALCODE") = Trim(rsCustomer.Fields("CustomerZip").value & "")
+			s.e("SHIPMENT/COMMON/CONSIGNEE_PHONE") = rsCustomer.Fields("CustomerPhone").value & ""
+
+			'Code plugs US if country field is empty
+			If rsCustomer.Fields("CustomerCountry").value = "" Then
+				s.e("SHIPMENT/COMMON/CONSIGNEE_COUNTRY") = "US"  
+			Else
+				s.e("SHIPMENT/COMMON/CONSIGNEE_COUNTRY") = UCase(Trim(rsCustomer.Fields("CustomerCountry").value & ""))
+			End If
+		
+		ElseIf chkBillToCode = "True" Then
+			'Code populates ProShip BOL Billto line
+			s.e("SHIPMENT/CMS/CSTM_BOL_BILLTO_LINE1") = UCase(Trim(rsCustomer.Fields("CustomerName").value & "" ))
+			s.e("SHIPMENT/CMS/CSTM_BOL_BILLTO_LINE2") = UCase(Trim(rsCustomer.Fields("CustomerAddress1").value & ""))
+			s.e("SHIPMENT/CMS/CSTM_BOL_BILLTO_LINE3") = UCase(Trim(rsCustomer.Fields("CustomerAddress2").value & ""))
+			s.e("SHIPMENT/CMS/CSTM_BOL_BILLTO_LINE4") = UCase(Trim(rsCustomer.Fields("CustomerCity").value & "")) & "  " & UCase(Trim(rsCustomer.Fields("CustomerState").value & "")) & "  "  & Trim(rsCustomer.Fields("CustomerZip").value & "")
+	
+		End If
+	End If
+	
+	'Forces Shipping screen to refresh
+	Sys.RefreshScreen
+
+	'Code empties recordset
+	Set rsCustomer = Nothing
+
+End Function
+
+Function BuildBOLCarrierComboBox()
+	'========================================================================
+	' This function reads through CSTM(ShipVia) table and creates a combo box for
+	' BOL screen field Trucking Company.
+	'========================================================================
+	'Remove any old Trucking Company in lists, if they exist
+	Set N = SYS.DD.SelectSingleNode("/SYSTEM/CSTM_BOL_CARRIER")
+	If Not N is Nothing then N.parentnode.removechild(N)
+	 
+	'Now loop and populate a new child node
+	Cnt=1
+
+	Query = "SELECT CustomerShipMethod, ProShipDescription, PaymentType, " & _
+			"CODFlag, ResidentialFlag, SaturdayDeliveryFlag " & _
+			"FROM ShipVia WHERE ProShipShipMethod = 'BWTI_LTL.LTL.GENERIC' ORDER BY ProShipShipMethod"	
+	
+	SET rsTruckingCompany = pCN.Execute(Query)
+	
+	Do While Not rsTruckingCompany.EOF
+		strTruckingCompanyName = Trim(rsTruckingCompany.Fields("ProShipDescription"))
+		
+		SYS.E("/SYSTEM/CSTM_BOL_CARRIER[" & cnt & "]/SYMBOL") = strTruckingCompanyName
+		Cnt = Cnt + 1
+		rsTruckingCompany.MoveNext
+	Loop
+	
+	'Code empties recordset
+	Set rsTruckingCompany = Nothing
+
+End Function
+
+Function AddLogTransaction(StrText, StrFunctionName, StrMessage, strPackageID)
+	'=========================================================================
+	'This is a logging transactions into a transaction log for troubleshooting purposes
+	'=========================================================================
+
+	StationName = machine.name
+	Shipper     = s.e("/SHIPMENT/COMMON/SHIPPER")
+
+	strSql = "insert Into transactionlog set " & _
+	"ShipmentID = '" & strPackageID & "', " & _
+	"Shipper = '" & Shipper & "', " & _
+	"StationName = '" & StationName & "', " & _
+	"sqltext = "  &chr(34) & StrText & chr(34) & ", " & _
+	"FunctionName = '" & StrFunctionName & "', " & _
+	"User = '" & Trim(s.e("/SHIPMENT/CMS/CSTM_SHIPPERID")) & "', " & _
+	"Message = '" & StrMessage  & "'"
+	
+	pcn.Execute(strSql)
+
+End Function
+
+Function FindShipperAddress(CurrentShipper)
+	'========================================================================
+	' This subroutine reads System XML to find Shipto Address that goes with Shipper
+	' being used. Uses this address to populate return address on Bill of Lading Document
+	'========================================================================
+	sNode = "//SHIPMENT/CMS/BOL"
+	sCity = ""
+	sState = ""
+	sZip = ""
+		
+	'Code gets shippers address from System XML File and populates BOL fields
+	S.E(sNode & "/CSTM_BOL_RETURN_LINE1") = Sys.E("//SHIPPERS/SHIPPER[SYMBOL='" & CurrentShipper & "']/INFO/COMPANY")
+	S.E(sNode & "/CSTM_BOL_RETURN_LINE2") = Sys.E("//SHIPPERS/SHIPPER[SYMBOL='" & CurrentShipper & "']/INFO/ADDRESS1")
+	S.E(sNode & "/CSTM_BOL_RETURN_LINE3") = Sys.E("//SHIPPERS/SHIPPER[SYMBOL='" & CurrentShipper & "']/INFO/ADDRESS2")
+	sCity = Trim(Sys.E("//SHIPPERS/SHIPPER[SYMBOL='" & CurrentShipper & "']/INFO/CITY"))
+	sState = Trim(Sys.E("//SHIPPERS/SHIPPER[SYMBOL='" & CurrentShipper & "']/INFO/STATEPROVINCE"))
+	sZip = Trim(Sys.E("//SHIPPERS/SHIPPER[SYMBOL='" & CurrentShipper & "']/INFO/POSTALCODE"))
+	S.E(sNode & "/CSTM_BOL_RETURN_LINE4") = Trim(sCity) & Space(02) & Trim(sState) & Space(02) & Trim(sZip)
+	
+End Function
+
+Function FigureoutShipmentTerms()
+	'=========================================================================
+	' This functions gets called from PostShipShipment and figures out currrent 
+	' shipment terms that gets printed on Documents.
+	'========================================================================= 
+	
+	If Shipment.E("SHIPMENT/COMMON/TERMS") = "SHIPPER" Then
+		S.E("SHIPMENT/CMS/CSTM_SHIPMENT_TERMS") = "PREPAID"
+	ElseIf Shipment.E("SHIPMENT/COMMON/TERMS") = "BR" Then
+		S.E("SHIPMENT/CMS/CSTM_SHIPMENT_TERMS") = "BILL RECIPIENT"
+	ElseIf Shipment.E("SHIPMENT/COMMON/TERMS") = "THIRD_PARTY" Then
+		S.E("SHIPMENT/CMS/CSTM_SHIPMENT_TERMS") = "BILL THIRD PARTY"
+	ElseIf Shipment.E("SHIPMENT/COMMON/TERMS") = "CONSIGNEE" Then
+		S.E("SHIPMENT/CMS/CSTM_SHIPMENT_TERMS") = "CONSIGNEE"
+	ElseIf Shipment.E("SHIPMENT/COMMON/TERMS") = "DDP" Then
+		S.E("SHIPMENT/CMS/CSTM_SHIPMENT_TERMS") = "DELIVERY DUTY PAID"
+	ElseIf Shipment.E("SHIPMENT/COMMON/TERMS") = "CFR" Then
+		S.E("SHIPMENT/CMS/CSTM_SHIPMENT_TERMS") = "COST & FREIGHT"
+	ElseIf Shipment.E("SHIPMENT/COMMON/TERMS") = "FOB" Then
+		S.E("SHIPMENT/CMS/CSTM_SHIPMENT_TERMS") = "FREE ON BOARD"
+	ElseIf Shipment.E("SHIPMENT/COMMON/TERMS") = "SDT" Then
+		S.E("SHIPMENT/CMS/CSTM_SHIPMENT_TERMS") = "SPLIT DUTIES / TAXES"
+	ElseIf Shipment.E("SHIPMENT/COMMON/TERMS") = "TP_DDP" Then
+		S.E("SHIPMENT/CMS/CSTM_SHIPMENT_TERMS") = "DELIVERY DUTY PAID THIRD PARTY"
+	End If
+	
+End Function
+
+Function GetShipmentWeight(iShipmentWeight)
+	'========================================================================
+	' This function reads through each package node and adds each package weight to 
+	' total shipmetn weight fields. This function gets called from POSTSHIPSHIPMENT if
+	' field BILLED_WEIGHT is left empty by Proship.
+	'========================================================================
+
+	'Code finds number of Package nodes
+	iTotalPackages = S.ELEMENTEXISTS("SHIPMENT/PACKAGE")
+	
+	'Code reads through each package node finding weight of each package
+	For i=1 to iTotalPackages
+		iShipmentWeight = iShipmentWeight + CNum(s.e("SHIPMENT/PACKAGE[" & i & "]/WEIGHT"))
+	Next
+
+End Function
+
+Function FormatShippedTimeHHMMSS(strCurrentTime)
+	'=========================================================================
+	' This function gets current time from system clock. Puts time into format (HHMMSS) 
+	'=========================================================================
+	strCurrentTime = strCurrentTime & iif(len(hour(time()))<2, "0"& hour(time()), hour(time()))
+	strCurrentTime = strCurrentTime & iif(len(minute(time()))<2, "0"& minute(time()), minute(time()))
+	strCurrentTime = strCurrentTime & iif(len(second(time()))<2, "0"& second(time()), second(time()))	
+	
+End Function
+
+Function CalculateCODLastPackage(iShipmentCODAmount)
+	'=========================================================================
+	' This function puts COD amount on last package in a shipment.
+	'=========================================================================
+	
+	'Code finds total packages on shipment
+	iPackage = Shipment.TP
+
+	If iPackage > 1 Then
+		'Code moves COD amount and COD payment method from package 1 to last package on shipment
+		s.e("SHIPMENT/PACKAGE[" & iPackage & "]/COD_AMOUNT") = s.e("SHIPMENT/PACKAGE[1]/COD_AMOUNT")
+		s.e("SHIPMENT/PACKAGE[" & iPackage & "]/COD_PAYMENT_METHOD") = s.e("SHIPMENT/PACKAGE[1]/COD_PAYMENT_METHOD")
+		
+		'Code blanks out COD amount and COD payment method on package 1
+		s.e("SHIPMENT/PACKAGE[1]/COD_AMOUNT") = ""
+		s.e("SHIPMENT/PACKAGE[1]/COD_PAYMENT_METHOD") = ""
+	End If
+	
+	'Code rates shipment to get correct COD fee for shipment
+	Shipment.Rate
+	
+	'Code adds freight charges to COD amount if CSMT FREIGHT FLAG = N.
+	If UCase(s.e("SHIPMENT/CMS/CSTM_FREIGHT_FLAG")) = "Y" Then
+		s.e("SHIPMENT/PACKAGE[" & iPackage & "]/COD_AMOUNT") = CCur(s.e("SHIPMENT/PACKAGE[" & iPackage & "]/COD_AMOUNT")) + CCur(s.e("SHIPMENT/COMMON/COD_FEE"))
+	Else
+		s.e("SHIPMENT/PACKAGE[" & iPackage & "]/COD_AMOUNT") = CCur(s.e("SHIPMENT/PACKAGE[" & iPackage & "]/COD_AMOUNT")) + CCur(s.e("SHIPMENT/COMMON/TOTAL")) 
+	End If
+End Function
+
+Function CreatePackageUCCNumberCustomer(strErrorMessage)
+	'========================================================================
+	' This function gets current UCC128 number from CSTM(Customer) table. Increments
+	' number by 1 and writes back next number. Then calls function that calculates check
+	' digit and then updates ProShip PACKAGE node wthin UCC128 number.
+	'========================================================================
+'And strSoldTo <> "2003506" _ veterans canteen
+	'Code sets variables
+	strSoldTo = s.e("SHIPMENT/CMS/CSTM_SOLDTO")
+	
+	If strSoldTo <> "113515" _
+		And strSoldTo <> "2003652" _
+		And strSoldTo <> "101082" _
+		And strSoldTo <> "101259" Then
+		Exit Function
+	End If
+	
+	'Code reads through each ProShip package node and creates a 
+	'UCC128 number for each Package node. 
+	For Package = 1 to Shipment.TP
+		Query = "Select UCC128 From CSTM.Customer " & _
+				"Where CustomerID = '" & strSoldTo & "'"
+
+		Set rsCustomerTable = pCN.Execute(Query,RecordsAffected)
+
+		If RecordsAffected < 1 Then
+			strErrorMessage = "Can't print UCC label for SoldTo  " & strSoldTo & vbCrLf & _
+							  "SoldTo  " & strSoldTo & "  not found Customer Table" & vbCrLf & vbCrLf & _
+							  "Exit proship and verify that customer  "  & strSoldTo & vbCrLf & _
+							  "is in CSTM(Customer) Table." & vbCrLf & vbCrLf & _
+							  "Add customer if necessary"
+		Else
+			If rsCustomerTable.Fields("UCC128").value = "" Then
+				strErrorMessage = "UCC128 field is empty for Customer " & strSoldTo & _
+					  "  You need to enter in a valid starting UCC128 number" & vbCrLf & _
+					  "in Customer Table for this customer before continuing"
+			Else
+				intNumber = rsCustomerTable.Fields("UCC128").value
+	
+				'Code emptioes recordset
+				set rsCustomerTable = Nothing
+				
+				'Code adds 1 to current UCC Number
+				intNewUCCNumber = intNumber + 1 
+	
+				intNewUCCNumber = Cstr(intNewUCCNumber)
+	
+				'Puts back leading zeros in field
+				intNewUCCNumber = LPad(intNewUCCNumber,"0",19)
+				
+				'Codes updates CSTM(GeneralSetup) table with new UCC Number
+				SET rsCustomerTable = pCN.Execute("UPDATE CSTM.Customer SET UCC128 = '" & intNewUCCNumber & "' Where CustomerID = '" & strSoldTo & "'")
+				
+				'Code calls function that figures out check digit for current UCC Number
+				Call Mod10Routine(intNumber, intCheckDigit)
+				
+				s.e("SHIPMENT/PACKAGE[" & package & "]/CSTM_UCC_NUMBER") = intNumber & intCheckDigit
+				s.e("SHIPMENT/PACKAGE[" & package & "]/CSTM_UCC_NUMBER_HUMAN_READABLE") = "(" & Mid(Trim(intNumber),1,2) & ")" & Mid(Trim(intNumber),3,17) & intCheckDigit
+				s.e("SHIPMENT/PACKAGE[" & package & "]/CSTM_UCC_NUMBER_HUMAN_READABLE1") = "(" & Mid(Trim(intNumber),1,2) & ")" & " " & Mid(Trim(intNumber),3,1) & " " & Mid(Trim(intNumber),4,7) & " " & Mid(Trim(intNumber),11,9) & " " & intCheckDigit
+			End If
+		End If
+	Next
+	
+	'Code emptys recordset
+	Set rsCustomerTable = Nothing
+
+End Function 
+
+Function CreateRackNodes()
+	'========================================================================
+	' This function reads through each PACKAGE node and if node CSTM_BOXTYPE wasn't
+	' equal to "" then we build a RACK node. These RACK nodes will print Rack labels.
+	'========================================================================
+
+	'Code sets variables
+	i = 1
+	
+	'Code reads through each ProShip package node and creates a Rack node if field
+	'CSTM_BOXTYPE is not empty. 
+	For iPackage = 1 to Shipment.TP
+		If s.e("SHIPMENT/PACKAGE[" & iPackage & "]/CSTM_BOXTYPE") <> "" Then
+			sRack = "SHIPMENT/CMS/RACK[" & CNum(i) & "]" 
+			s.e(sRack & "/RACK_NUMBER") 			= s.e("SHIPMENT/PACKAGE[" & iPackage & "]/CSTM_BOXTYPE") 
+			s.e(sRack & "/RACK_SEQUENCE") 			= ipackage & " of " & Shipment.TP 
+			s.e(sRack & "/RACK_TRACKING_NUMBER") 	= s.e("SHIPMENT/PACKAGE[" & iPackage & "]/TRACKING_NUMBER") 
+			i = i + 1
+		End If
+	Next
+
+End Function
+
+Function GetBill3rdPartyInformation(strErrorMessage, OkToContinue)
+	'=========================================================================
+	' This function validates to make sure that when shipping Collect we received account
+	' number from Oracle. Also make sure that Bill 3rd Party Information is setup.
+	'=========================================================================
+	strAccountNumber = Trim(s.e("SHIPMENT/COMMON/CONSIGNEE_ACCOUNT"))
+	
+	Query = "SELECT UPSAccountNumber, BillToCustomerName, BillToCustomerAddress1, " & _
+		"BillToCustomerAddress2, BillToCity, BillToState, BillToZip, BillToCountry " & _
+		"FROM CSTM.Customer Where UPSAccountNumber = '" & strAccountNumber & "'"
+		
+	Set rsCustomer = pCN.Execute(Query)
+
+	If rsCustomer.eof Then
+		strErrorMessage = "UPS Bill 3rd Party Account not found in CSTM(Customer) Table. Please add 3rd Party Billing Account"  & vbCrlf & _
+					"and Address information to CSTM(Customer) table or change Payment Terms before continuing"
+		OkToContinue = False
+
+	Else		
+		 s.e("SHIPMENT/COMMON/TPBILL_COMPANY") = Trim(rsCustomer("BillToCustomerName").value & "") 
+		 s.e("SHIPMENT/COMMON/TPBILL_ADDRESS1") = Trim(rsCustomer("BillToCustomerAddress1").value & "") 
+		 s.e("SHIPMENT/COMMON/TPBILL_CITY") = Trim(rsCustomer("BillToCity").value & "") 
+		 s.e("SHIPMENT/COMMON/TPBILL_STATE") = Trim(rsCustomer("BillToState").value & "") 
+		 s.e("SHIPMENT/COMMON/TPBILL_POSTALCODE") = Trim(rsCustomer("BillToZip").value & "") 
+		 s.e("SHIPMENT/COMMON/TPBILL_COUNTRY") = Trim(rsCustomer("BillToCountry").value & "") 
+		OkToContinue = True
+	End If
+
+	'Code empties recordset
+	Set rsCustomer = Nothing
+End Function
+
+
+Function FindPOBOXAddress(POBOXAddressFlag)
+	'========================================================================
+	' This functions looks for PO BOX address from Consignee Address 1 and Consignee 
+	' address 2 lines. If found passes back to called program POBOXAddressFound = True.
+	'========================================================================
+	
+	'Code sets variables
+	Consignee = UCase(S.E("/SHIPMENT/COMMON/CONSIGNEE_ADDRESS1")) & _
+			    UCase(S.E("/SHIPMENT/COMMON/CONSIGNEE_ADDRESS2"))
+	
+	If ((Instr(1,Consignee,"PO BOX") > 0 ) OR _
+	   (Instr(1,Consignee,"P O BOX") > 0 ) OR _
+	   (Instr(1,Consignee,"P.O. BOX") > 0 ) OR _
+	   (Instr(1,Consignee,"POB ") > 0 ) OR _
+	   (Instr(1,Consignee,"PO. BOX ") > 0 ) OR _
+	   (Instr(1,Consignee,"POST OFFICE B") > 0 ) OR _
+	   (Instr(1,Consignee,"POST OFFICE BOX") > 0 ) OR _
+	   (Instr(1,Consignee,"P.O.B.") > 0 )) Then	
+	   
+		POBOXAddressFlag = True
+	Else
+		POBOXAddressFlag = False
+	End If
+End Function
+
+Function BuildLTLCommodityComboBox()
+	'========================================================================
+	' This function reads through table LTLCommodity and creates a combo box for
+	' screen field Commodity Class.
+	'========================================================================
+	'Remove any old Picker lists, if they exist
+	Set N = SYS.DD.SelectSingleNode("/SYSTEM/CSTM_SCREEN_COMMODITY_CLASS")
+	If Not N is Nothing then N.parentnode.removechild(N)
+	 
+	'Now loop and populate a new child node
+	Cnt=1
+	
+	Query = "SELECT CommodityClass, CommodityDescription, NMFC " & _
+			"FROM LTLCommodity ORDER BY CommodityClass"
+	
+	Set rsLTLCommodity = pCN.Execute(Query)
+	
+	Do While Not rsLTLCommodity.EOF
+	
+		sCommodity = Trim(rsLTLCommodity.Fields("CommodityClass")) & Space(02)
+		sCommodityDescription = Space(02) & Trim(rsLTLCommodity.Fields("CommodityDescription"))
+		
+		'MsgBox sCommodity & vbCrLf & sCommodityDescription
+		
+		SYS.E("/SYSTEM/CSTM_SCREEN_COMMODITY_CLASS[" & cnt & "]/PLAINTEXT") = sCommodityDescription 
+		SYS.E("/SYSTEM/CSTM_SCREEN_COMMODITY_CLASS[" & cnt & "]/SYMBOL") = sCommodity
+		
+		Cnt = Cnt + 1
+		rsLTLCommodity.MoveNext
+	Loop
+	
+	'Code empties recordset
+	Set rsLTLCommodity = Nothing
+	
+End Function
+
+Function LookupLTLCommodity(strCommodity)
+	'======================================================================
+	' This function gets called whenever CommodityID field changes on LTLDETAIL screen 
+	'======================================================================
+	
+	'Code sets Variables
+	sBOL = "SHIPMENT/CMS/BOL"
+	
+	Query = "SELECT CommodityClass, CommodityDescription, NMFC " & _
+			"FROM LTLCommodity " & _
+			"Where CommodityClass = '" & strCommodity & "'"
+	
+	Set rsLTLCommodity = pCN.Execute(Query)
+	
+	If rsLTLCommodity.eof Then
+		'Code displays error message if Commodity not found in CSTM(LTLCommodity) table
+		strWindowMessage = "CommodityID  " &  Trim(strCommodity) & "  not found in CSTM(LTLCommodity) table" & Vbcrlf & _
+						  "Please verify CommodityID and add record if needed" & vbcrlf & vbCrlf & _
+						  "Do you want to continue filling out LTL Detail screen?"
+						  
+		strWindowName = "No Record Found - User_scripts.LookupLTLCommodity"
+		strWindowButtons = vbQuestion+vbYesNo
+		
+		If vbNo = MsgBox (strWindowMessage,strWindowButtons,strWindowName) Then
+			'Code blanks out fields on screen
+			s.e(sBOL & "/CSTM_SCREEN_COMMODITY_CLASS") = ""
+			s.e(sBOL & "/CSTM_SCREEN_DESCRIPTION")     = ""
+			s.e(sBOL & "/CSTM_SCREEN_NMFC")            = ""
+			
+			Exit Function
+		End If
+	Else
+		'Code populates LTL Detail screen fields
+		s.e(sBOL & "/CSTM_SCREEN_COMMODITY_CLASS") = Trim(rsLTLCommodity.Fields("CommodityClass").value & "" )
+		s.e(sBOL & "/CSTM_SCREEN_DESCRIPTION")     = Trim(rsLTLCommodity.Fields("CommodityDescription").value & "" )
+		s.e(sBOL & "/CSTM_SCREEN_NMFC")            = Trim(rsLTLCommodity.Fields("NMFC").value & "" )
+	End If
+
+	'Code empties recordset
+	Set rsLTLCommodity = Nothing
+
+End Function
+
+Function LookupLTLCommodityDefault()
+	'======================================================================
+	' This function gets called whenever LTLDETAIL screen is about to be displayed
+	' and LTL Commodity code is empty. This function finds default LTL Commodity and 
+	' populates that information on screen.
+	'======================================================================
+	
+	'Code sets Variables
+	sBOL = "SHIPMENT/CMS/BOL"
+	
+	Query = "SELECT CommodityClass, CommodityDescription, NMFC " & _
+			"FROM LTLCommodity " & _
+			"Where DefaultCommodityCode = 'Y'"
+	
+	Set rsLTLCommodity = pCN.Execute(Query)
+	
+	If rsLTLCommodity.eof Then
+		'Code displays error message if no default CommodityID is found in CSTM(LTLCommodity) table
+		strWindowMessage = "No Default CommodityID found in CSTM(LTLCommodity) table" & Vbcrlf & _
+						  "Please verify CommodityID and add record if needed"
+						  
+		strWindowName = "No Record Found - User_scripts.LookupLTLCommodity"
+		MsgBox strWindowMessage,vbInformation + vbOkOnly, strWindowName
+	Else
+		'Code populates LTL Detail screen fields
+		s.e(sBOL & "/CSTM_SCREEN_COMMODITY_CLASS") = Trim(rsLTLCommodity.Fields("CommodityClass").value & "" )
+		s.e(sBOL & "/CSTM_SCREEN_DESCRIPTION")     = Trim(rsLTLCommodity.Fields("CommodityDescription").value & "" )
+		s.e(sBOL & "/CSTM_SCREEN_NMFC")            = Trim(rsLTLCommodity.Fields("NMFC").value & "" )
+	End If
+
+	'Code empties recordset
+	Set rsLTLCommodity = Nothing
+
+End Function
+
+
+Function GetBOLTotals()
+	'========================================================================
+	' This function reads each CMS/BOL nodes to get (Total Cartons, TotalPallets, and
+	' Total Weight). This information is written to CSM/BOL nodes to be displayed on BOL 
+	' screen as reference. 
+	'========================================================================
+	
+	'Code sets variables
+	iShipmentWeight = 0
+	iTotalCartons   = 0
+	iTotalPallets   = 0
+	
+	'Code finds number of CMS/BOL/LINE nodes
+	iTotalBOLLines = s.ElementExists("SHIPMENT/CMS/BOL/LINE")
+	
+	'Code reads through each CMS/BOL/LINE node finding weight and populates Total weight
+	For i=1 to iTotalBOLLines
+		iShipmentWeight = iShipmentWeight + CNum(s.e("SHIPMENT/CMS/BOL/LINE[" & i & "]/BOL_WEIGHT"))
+		iTotalCartons   = iTotalCartons + CNum(s.e("SHIPMENT/CMS/BOL/LINE[" & i & "]/BOL_CARTONS"))
+		iTotalPallets   = iTotalPallets + CNum(s.e("SHIPMENT/CMS/BOL/LINE[" & i & "]/BOL_PALLETS"))
+	Next
+	
+	'Code updates Proship screen with weight from BOL screen.
+	s.e("SHIPMENT/COMMON/BILLED_WEIGHT") = iShipmentWeight
+	s.e("SHIPMENT/PACKAGE[1]/WEIGHT") = iShipmentWeight
+	s.e("SHIPMENT/CMS/BOL/CSTM_BOL_TOTAL_WEIGHT") = iShipmentWeight
+	s.e("SHIPMENT/CMS/BOL/CSTM_BOL_TOTAL_CARTONS") = iTotalCartons
+	s.e("SHIPMENT/CMS/BOL/CSTM_BOL_TOTAL_PALLETS") = iTotalPallets
+	
+End Function
+
+Function BuildAddressLabelNodes()
+	'========================================================================
+	' This function builds number of Address nodes for when customer only wants to print 
+	' customer address labels. This will usually happen on LTL shipments.
+	'========================================================================
+
+	If s.e("/SHIPMENT/CMS/CSTM_ONLY_PRINT_ADDRESS_LABEL_FLAG") = "True" Then	
+		sAddressNode = "//SHIPMENT/CMS/ADDRESS"
+		intAddressLabels = s.e("SHIPMENT/CMS/CSTM_ADDRESS_LABELS")
+		
+		For intAddressNodes = 1 to intAddressLabels
+			s.e(sAddressNode & "/LABEL[" & intAddressNodes & "]/LABEL_COUNT")  = intAddressNodes & "  of  " & intAddressLabels
+		Next
+	End If
+	
+End Function
+
+Function LookupPalletLabels(intPalletLabels, strWarehouseCode, intTotalPallets)
+	'========================================================================
+	' This functions looks for number of pallet labels to print per pallet in 
+	' CSTM(WAREHOUSE) table. 
+	'========================================================================
+	
+	'Code builds query to lookup Pallet Labels 
+	Query = "Select PalletLabels " & _
+			"From CSTM.Warehouse " & _
+			"Where WarehouseCode = '" & UCase(strWarehouseCode) & "'"
+
+	On Error Resume Next
+	Set rsWarehouse = pCN.Execute(Query)
+	If Err.Number <> 0 Then
+		'Code displays error number and error description if error when reading CSTM(Warehouse) database
+		strWindowMessage = Err.Number & "  " & Err.Description 
+		strWindowName = "User_scripts.LookupPalletLabels"
+		strWindowButtons = vbCritical + vbOkOnly
+		MsgBox strWindowMessage,strWindowButtons,strWindowName
+		
+		OkToContinue = False
+		Exit Function
+	End If
+	
+	If rsWarehouse.eof Then
+	
+	Else	
+		'Code looks for labels per pallet to print and multiply by number of pallets on shipment
+		intPalletLabels = CNum(rsWarehouse("PalletLabels").value & "") * Cnum(intTotalPallets)
+	End If
+	
+	'Code empties RecordSet
+	Set rsWarehouse = Nothing
+	
+End Function
+
+Function ValidateBoxType(sBoxType, sBoxWeight, sBoxDimensions, blnBoxTypeFound)
+	'======================================================================
+	' This function gets called to validate that box type is in CSTM.BoxDimension table.
+	'======================================================================
+	
+	'Code sets variables
+	sQuery = ""
+	
+	'Code builds query yo lookup box type and find Dimensions
+	sQuery = "SELECT BoxType, BoxLength, BoxWidth, BoxHeight, BoxWeight " & _
+			"FROM BoxDimension WHERE BoxType = '" & sBoxType & "'"
+	
+	Set rsBoxDimension = pCN.Execute(sQuery)
+	
+	If rsBoxDimension.eof Then
+		'Code sets flag to False
+		blnBoxTypeFound = False
+	Else
+		'Code looks for Box Dimensions to populate ProShip
+		If Trim(rsBoxDimension("BoxLength").value & "") <> ""  _
+			Or Trim(rsBoxDimension("BoxWidth").value & "") <> "" _
+			Or Trim(rsBoxDimension("BoxHeight").value & "") <> "" Then
+	
+			'Code looks for Box Dimensions to populate ProShip
+			sBoxDimensions = Trim(rsBoxDimension("BoxLength").value & "") & "x" & _
+							 Trim(rsBoxDimension("BoxWidth").value & "") & "x" & _
+							 Trim(rsBoxDimension("BoxHeight").value & "") 
+		Else
+			sBoxDimensions = ""	
+		End If
+	
+		'Code populates package weight.
+		sBoxWeight = CNum(rsBoxDimension("BoxWeight").value & "")
+		
+		'Code sets flag to False
+		blnBoxTypeFound = True
+
+	End If
+	
+	'Code empties RecordSet
+	Set rsBoxDimension = Nothing
+	
+End Function
+
+Function FixStringField(myField)
+	'========================================================================
+	' This code looks at string fields. Converts ' or "" to space and passes 
+	' back converted field
+	'========================================================================
+	myField = Replace(myField, "\", "-")
+	myField = Replace(myField, "'", chr(96))
+	myField = Replace(myField, chr(34), "")
+	myField = Replace(myField, ")", "\)")
+	myField = Replace(myField, "(", "\(")
+	myField = Replace(myField, "&", "and")
+	myField = Replace(myField, "^", "")
+	myField = Replace(myField, ",", " ")
+
+	FixStringField = myfield
+End Function
+
+Function LookupProductCode(sProductID)
+	'======================================================================
+	' This function looks up Product information from CSTM(Product) table. 
+	'======================================================================	
+	
+	Query = "SELECT ProductID, ProductDescription, HarmonizedCode, " & _
+			"UnitOfMeasure, UnitPrice, UnitWeight, UnitOfOrign, " & _
+			"LicenseNumber, ECCN, UserText1 " & _
+		    "FROM CSTM.Product WHERE ProductID = '" & UCase(Trim(sProductID)) & "'"	
+			
+	On Error Resume Next
+	Set rsProduct = pCN.Execute(Query)
+	
+	If Err.Number <> 0 Then
+		'Code displays error number and error description if error when creating datbase
+		sWindowMessage = Err.Number & "  " & Err.Description 
+		sWindowName = "User_Scripts.LookupProductCode"
+		sWindowButtons = vbCritical + vbOkOnly
+		MsgBox sWindowMessage,sWindowButtons,sWindowName
+		
+		blnRecordFound = False
+		Exit Function
+	End If
+	
+	If rsProduct.eof Then
+		'Code displays error message if ProductID not found in CSTM(Product) table
+		sWindowMessage = "ProductID  " &  UCase(Trim(sProductID)) & "  not found in CSTM(Product) table" & Vbcrlf & _
+						  "Please verify ProductID and add record if needed"
+						  
+		sWindowName = "No Record Found - User_scripts.LookupProductCode"
+		MsgBox sWindowMessage,vbInformation + vbOkOnly, sWindowName
+	Else
+		'Code populates ProShip International fields
+		s.e("/SHIPMENT/CMS/PRODUCT/LINE/CSTM_PRODUCT_CODE") 			= UCase(Trim(rsProduct.Fields("ProductID").value & "" ))
+		s.e("/SHIPMENT/CMS/PRODUCT/LINE/CSTM_CI_DESCRIPTION") 			= UCase(Trim(rsProduct.Fields("ProductDescription").value & "" ))
+		s.e("/SHIPMENT/CMS/PRODUCT/LINE/CSTM_HARMONIZED_CODE") 			= UCase(Trim(rsProduct.Fields("HarmonizedCode").value & "" ))
+		s.e("/SHIPMENT/CMS/PRODUCT/LINE/CSTM_QUANTITY_UNIT_MEASURE")	= Trim(rsProduct.Fields("UnitOfMeasure").value & "" )
+		s.e("/SHIPMENT/CMS/PRODUCT/LINE/CSTM_UNIT_VALUE") 				= Trim(rsProduct.Fields("UnitPrice").value & "" )
+		s.e("/SHIPMENT/CMS/PRODUCT/LINE/CSTM_UNIT_WEIGHT") 				= Trim(rsProduct.Fields("UnitWeight").value & "" )
+		s.e("/SHIPMENT/CMS/PRODUCT/LINE/CSTM_COUNTRY_OF_MANUFACTURE") 	= UCase(Trim(rsProduct.Fields("UnitOfOrign").value & "" ))
+		s.e("/SHIPMENT/CMS/PRODUCT/LINE/CSTM_LIC_EXC_SYMBOL") 			= UCase(Trim(rsProduct.Fields("LicenseNumber").value & "" ))
+		s.e("/SHIPMENT/CMS/PRODUCT/LINE/CSTM_ECCN")			 			= UCase(Trim(rsProduct.Fields("ECCN").value & "" ))
+	End If
+
+	'Code empties recordset
+	Set rsProduct = Nothing
+	
+End Function
+
+
+Function GetNodeValue(XMLin, strNodeName)
+
+	On Error Resume Next
+	XMLin = Trim(XMLin)
+	XMLin = Replace(XMLin,vbTab,"")
+
+	'Create XML document object from server response...
+	Set pCN5 = CreateObject("MSXML2.DOMDocument")
+	pCN5.SetProperty "SelectionLanguage", "XPath"
+	
+	If pCN5.loadXML(XMLin) Then
+		GetNodeValue = Trim(pCN5.SelectSingleNode(strNodeName).Text & "")
+	Else
+		GetNodeValue = ""
+	End If 
+
+End Function
+
+Function ValidateSAPRacksLeaninTree(sBoxType, sBoxWeight, sBoxDimensions, blnBoxTypeFound, blnBoxTypeIngore)
+	'======================================================================
+	' This function gets called to validate that box type is in CSTM.BoxDimension table.
+	'======================================================================
+	
+	'Code sets variables
+	sQuery = ""
+	
+	'Code builds query yo lookup box type and find Dimensions
+	sQuery = "SELECT BoxType, BoxLength, BoxWidth, BoxHeight, " & _
+			 "BoxWeight, IgnoreBox " & _
+			"FROM BoxDimension WHERE BoxType = '" & sBoxType & "'"
+	
+	Set rsBoxDimension = pCN.Execute(sQuery)
+	
+	If rsBoxDimension.eof Then
+		'Code sets flag to False
+		blnBoxTypeFound = False
+	Else
+		'Code checks for box type is to ignored
+		If rsBoxDimension("IgnoreBox").value <> "Y"  then
+
+			'Code looks for Box Dimensions to populate ProShip
+			If Trim(rsBoxDimension("BoxLength").value & "") <> ""  _
+				Or Trim(rsBoxDimension("BoxWidth").value & "") <> "" _
+				Or Trim(rsBoxDimension("BoxHeight").value & "") <> "" Then
+		
+				'Code looks for Box Dimensions to populate ProShip
+				sBoxDimensions = Trim(rsBoxDimension("BoxLength").value & "") & "x" & _
+								 Trim(rsBoxDimension("BoxWidth").value & "") & "x" & _
+								 Trim(rsBoxDimension("BoxHeight").value & "") 
+			Else
+				sBoxDimensions = ""	
+			End If
+		
+			'Code populates package weight.
+			sBoxWeight = CNum(rsBoxDimension("BoxWeight").value & "")
+		Else
+			blnBoxTypeIngore = True
+		End If
+		
+		'Code sets flag to False
+		blnBoxTypeFound = True
+
+	End If
+	
+	'Code empties RecordSet
+	Set rsBoxDimension = Nothing
+	
+End Function
+
+Function BuildPackageNodesfromRacksLeaninTree(sRacksNotFound)
+	'========================================================================
+	' This function builds package nodes from RACKS that Leanin Tree include 
+	' in SAP Delivery ID.
+	'========================================================================
+	
+	'Code sets variables
+	sRacksNotFound		= ""
+	iPackageCount   	= 0
+	sRacksNode 			= "/SHIPMENT/CMS/SAP_TABLES"
+	
+
+	'Code finds number of Delivery racks on SAP Shipment
+	iDeliveryRacks = Shipment.ElementExists(sRacksNode & "/DELIVERY_RACKS")
+	
+	'Code reads through each package node finding weight of each package
+	For i=1 to iDeliveryRacks
+		'Code sets variables 
+		sBoxType 			= ""
+		sBoxWeight 			= ""
+		sBoxDimensions		= ""
+		blnBoxTypeFound		= False
+		blnRackAlreadyUsed	= False
+		blnBoxTypeIngore	= False
+		sBoxType 			= Shipment.E(sRacksNode & "/DELIVERY_RACKS[" & i & "]/PART_NUMBER")
+		iOrderQuantity		= CNum(Shipment.E(sRacksNode & "/DELIVERY_RACKS[" & i & "]/ORDER_QUANTITY"))
+		
+		'Code calls function to validate if SAP rack has already been used on shipment
+		Call ValidateSAPRackNotOnShipment(sBoxType, blnRackAlreadyUsed)
+		
+		'Code validates SAP rack if not already on shipment
+		If blnRackAlreadyUsed = False then
+			'Code calls function that validates Rack is in CSTM.BoxDimension Table
+			Call ValidateSAPRacksLeaninTree(sBoxType, sBoxWeight, sBoxDimensions, blnBoxTypeFound, blnBoxTypeIngore)
+			
+			'Code adds new package node and populates fields
+			If blnBoxTypeFound = True Then
+				If blnBoxTypeIngore = False Then
+			
+					'Code creates new PACKAGE node for each rack qty
+					For iQTY=1 To iOrderQuantity
+					
+						If Shipment.E("/SHIPMENT/CMS/CSTM_RACKS_ONLY_SHIPMENT_FLAG") = "True" _
+							And CNum(i) > 1 Then
+							
+							'adds new Package node
+							Shipment.AddPackage
+							
+						ElseIf Shipment.E("/SHIPMENT/CMS/CSTM_RACKS_ONLY_SHIPMENT_FLAG") = "True" _
+							And CNum(i) = 1 _ 
+							And Cnum(iQTY) > 1 Then
+							
+							'adds new Package node
+							Shipment.AddPackage
+							
+						ElseIf Shipment.E("/SHIPMENT/CMS/CSTM_RACKS_ONLY_SHIPMENT_FLAG") = "False" Then
+							
+							'adds new Package node
+							Shipment.AddPackage
+						End If
+						
+						'Gets shipment package count
+						iPackageCount = Cnum(Shipment.tp)
+						
+						'Populates fields in new Package node that was just added
+						Shipment.E("/SHIPMENT/PACKAGE[" & iPackageCount & "]/PACKAGING") 		= "CUSTOM"
+						Shipment.E("/SHIPMENT/PACKAGE[" & iPackageCount & "]/WEIGHT") 			= sBoxWeight
+						Shipment.E("/SHIPMENT/PACKAGE[" & iPackageCount & "]/CSTM_BOXTYPE")		= sBoxType
+						Shipment.E("/SHIPMENT/PACKAGE[" & iPackageCount & "]/DIMENSION") 		= sBoxDimensions
+						Shipment.E("/SHIPMENT/PACKAGE[" & iPackageCount & "]/TERMS") 			= "SHIPPER"
+						Shipment.E("/SHIPMENT/PACKAGE[" & iPackageCount & "]/MISC_REFERENCE_1")	= Shipment.E("/SHIPMENT/PACKAGE[1]/MISC_REFERENCE_1") 
+						Shipment.E("/SHIPMENT/PACKAGE[" & iPackageCount & "]/MISC_REFERENCE_2") = Shipment.E("/SHIPMENT/PACKAGE[1]/MISC_REFERENCE_2") 
+					Next
+				End If
+			Else
+				'Code builds list of racks not found in CSTM(BoxDimension) table
+				sRacksNotFound = sRacksNotFound & sBoxType & vbCrlf
+			End If
+		End If
+	Next
+	
+End Function
+
+Function ValidateSAPRackNotOnShipment(sBoxType, blnRackAlreadyUsed)
+	'========================================================================
+	' This function reads through each package node to validate that SAP rack hasn't already 
+	'been added to current SAP shipment. If Rack is found than our code doesn't add rack 
+	'again to shipment.
+	'========================================================================
+
+	'Code finds number of Package nodes
+	iTotalPackages = Shipment.ElementExists("/SHIPMENT/PACKAGE")
+	
+	'Code reads through each package node fogureing if SAP rack has already been used on Shipment
+	For i=1 to iTotalPackages
+		If sBoxType = Trim(Shipment.E("/SHIPMENT/PACKAGE[" & i & "]/CSTM_BOXTYPE")) Then
+			'Code sets variable flag to TRUE
+			blnRackAlreadyUsed = True
+			'Code exits function
+			Exit Function
+		End If
+	Next
+End Function
+
+Function SubToken(StringVal,Delimeter,GrabPosition)
+	'======================================================================
+	' This function parses data out of a string based upon Delimiter 
+	' character passed.
+	'======================================================================
+    On Error Resume Next
+    If IsEmpty(StringVal) Then
+		SubToken = "Error: No string value passed to function!"
+		Exit Function
+    Else
+        If IsEmpty(Delimeter) Then
+            SubToken = "Error: Delimiter not passed to function!"
+            Exit Function
+        Else
+            ScanLen = Len(StringVal)
+            ScanCount = 1
+       
+            Do While ScanCount < ScanLen
+                ScanVal = Mid(StringVal, ScanCount, 1)
+                If ScanVal = Delimeter Then
+                    ScanPosCount = ScanPosCount + 1
+                    ReDim Preserve ScanPos(ScanPosCount)
+                    ScanPos(ScanPosCount) = ScanCount
+                Else
+                End If
+                ScanCount = ScanCount + 1
+            Loop
+
+            ScanPos(0) = 1
+    
+            If GrabPosition <= 0 Or GrabPosition = Null Then
+                'Error out, 0 or null value passed
+                SubToken = "Error: Grab Position < 0 or null"
+            ElseIf GrabPosition >= (ScanPosCount + 1) Then
+                'Grab very last position if larger number passed
+                SubToken = Right(StringVal, (ScanLen - ScanPos(ScanPosCount)))
+            Else
+                If GrabPosition = 1 Then
+                    SubToken = Mid(StringVal, ScanPos(0), (ScanPos(1) - 1))
+                ElseIf GrabPosition > 1 And GrabPosition < (ScanPosCount + 1) Then
+                    'SubToken = "Hey Dude! I'm looking in the middle of a string..."
+                    NewPosition = (GrabPosition - 1)
+                    NewLength = (ScanPos(GrabPosition) - ScanPos(NewPosition)) - 1
+                    
+                    SubToken = Mid(StringVal, (ScanPos(NewPosition) + 1), NewLength)
+                End If
+            End If
+        End If
+    End If
+
+End Function
+
+Function Over48AndUnder60Exemptions()
+	'========================================================================
+	' This function reads through each PACKAGE node and if first part of 
+	' DIMENSIONS is greater than 48 and less that 60 sets that package as an
+	' exception. Then code multiplies number of exception packages by 10.50 
+	' then sets /SHIPMENT/COMMON/CMS/CSTM_ADDITIONAL_HANDLING_EXEMPT_TOTAL
+	' to that value.
+	'========================================================================
+	
+	'Code finds number of Package nodes
+	iTotalPackages 			= Shipment.ElementExists("/SHIPMENT/PACKAGE")
+	iTotalExemptPackages	= 0
+	
+	'Code reads through each package node figuring out except packages0
+	For i=1 to iTotalPackages
+		If Trim(Shipment.E("/SHIPMENT/PACKAGE[" & i & "]/DIMENSION")) <> "" _
+			And Shipment.E("/SHIPMENT/COMMON/TERMS") ="SHIPPER" Then
+		
+			'converting dimensions field to upper case
+			sPackageDimensions = Ucase(Shipment.E("/SHIPMENT/PACKAGE[" & i & "]/DIMENSION"))
+		
+				'Checks for first part of dimensions is except 
+			If  CNum(SubToken(sPackageDimensions, "X", 1)) > 48 _
+				And CNum(SubToken(sPackageDimensions, "X", 1)) < 60.1 Then
+				
+				'Sets field in //package node that package is except
+				Shipment.E("/SHIPMENT/PACKAGE[" & i & "]/CSTM_ADDITIONAL_HANDLING_EXEMPTION") = "True"
+				'Adds 1 to running total for number of packages that are exempt
+				iTotalExemptPackages = iTotalExemptPackages + 1
+			Else
+				'Sets field in //package node that package is not except
+				Shipment.E("/SHIPMENT/PACKAGE[" & i & "]/CSTM_ADDITIONAL_HANDLING_EXEMPTION") = "False"
+			End If
+		End If
+	Next
+	
+	'Calculates total handling fee for except packages
+	If iTotalExemptPackages > 0 Then
+		Shipment.E("/SHIPMENT/CMS/CSTM_ADDITIONAL_HANDLING_EXEMPTION_TOTAL") = iTotalExemptPackages * 10.50
+	Else
+		Shipment.E("/SHIPMENT/CMS/CSTM_ADDITIONAL_HANDLING_EXEMPTION_TOTAL") = 0.00
+	End If
+	
+End Function

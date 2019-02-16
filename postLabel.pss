@@ -1,0 +1,162 @@
+Sub PostLabel(DocSymbol, RaterSymbol, ReprintPrefix)
+	'==================================================================
+	' This subroutine runs when Proship is printing any documents.
+	'==================================================================
+	Dim SH 
+	
+	'Code decides if printing is from current shipment history
+	If ReprintPrefix = "" Then
+		Set SH = Shipment
+		ReprintPrefix = "/SHIPMENT"
+		Source = "CURRENT"
+	Else
+		Set SH = S_History
+		Source = "HISTORY"
+	End If
+	
+	If Source = "HISTORY" Then
+		intTotalPackages = SH.E(ReprintPrefix & "//CMS/CSTM_TOTAL_BOXES")
+	Else
+		intTotalPackages = Shipment.TP
+	End If
+
+	Select Case DocSymbol
+		Case "PLPI_CN22"
+			'Do not print Custom CN22 Document
+			If SH.E(ReprintPrefix & "//SERVICE") <> "BWTI_LTL.LTL.CANADA" Then
+				pData1 = ""
+			End If
+			
+		'Case "PLPI_CN22TEST"
+			'Do not print Custom CN22 Document
+			'If SH.E(ReprintPrefix & "//SERVICE") <> "BWTI_LTL.LTL.CANADA" Then
+			'	pData1 = ""
+			'End If
+			
+		Case "PLPI_GENERIC1"
+			'Do not print Generic label
+			If SH.E(ReprintPrefix & "//SERVICE") <> "MR.LTL.WILLCALL" _
+				And SH.E(ReprintPrefix & "//SERVICE") <> "BWTI_LTL.LTL.CANADA" Then
+				pData1 = ""
+			End If
+			
+		Case "PLPI_PALLET1"
+			'Do not print Generic Pallet Label
+			If SH.E(ReprintPrefix & "//SERVICE") = "BWTI_LTL.LTL.CANADA" Then
+				pData1 = ""
+			End If
+			
+		Case "PLPI_RACK"
+			'Code blanks out label data for rack label if shipper is consumer
+			If SH.E(ReprintPrefix & "/COMMON/SHIPPER") = "CONSUMER" Then
+				pData1 = ""
+			ElseIf SH.E(ReprintPrefix & "/CMS/RACK/RACK_NUMBER") = "" Then
+				pData1 = ""
+			End If
+			
+				
+		Case "PLPI_GANDERMTN"
+			'Code blanks out label data if Soldto not Gander Mountain
+			If SH.E(ReprintPrefix & "/CMS/CSTM_SOLDTO") = "113515" _ 
+				AND SH.E(ReprintPrefix & "//SERVICE") = "BWTI_LTL.LTL.GANDER" Then
+				pData1 = ""
+			Elseif SH.E(ReprintPrefix & "/CMS/CSTM_SOLDTO") <> "113515" Then
+				pData1 = ""
+			End If
+			
+		Case "PLPI_GANDERTRUCK"
+			'Code blanks out label data if Soldto not Gander Mountain
+			If SH.E(ReprintPrefix & "/CMS/CSTM_SOLDTO") = "113515" _
+				AND SH.E(ReprintPrefix & "//SERVICE") <> "BWTI_LTL.LTL.GANDER" Then
+				pData1 = ""
+			Elseif SH.E(ReprintPrefix & "/CMS/CSTM_SOLDTO") <> "113515" Then
+				pData1 = ""
+			End If
+		Case "PLPI_BLAIN"
+			'Code blanks out label data if SoldTo not AAFES
+			If SH.E(ReprintPrefix & "/CMS/CSTM_SOLDTO") <> "101082" Then
+				pData1 = ""
+			End If	
+
+		Case "PLPI_AAFES"
+			'Code blanks out label data if SoldTo not AAFES
+			If SH.E(ReprintPrefix & "/CMS/CSTM_SOLDTO") <> "101259" Then
+				pData1 = ""
+			End If	
+			
+		Case "PLPI_PETSMART_UCC"
+			'Code blanks out label data if Soldto not Pet Smart
+			If SH.E(ReprintPrefix & "/CMS/CSTM_SOLDTO") <> "113570" Then
+				pData1 = ""
+			End If	
+
+		 Case "PLPI_BBB_UCC"
+			REM 'Code blanks out label data if SoldTo not BB&B
+			 If SH.E(ReprintPrefix & "/CMS/CSTM_SOLDTO") <> "2003652" Then
+				 pData1 = ""
+			 End If	
+			
+		Case "PLPI_BLAIN"
+			'Code blanks out label data if SoldTo not AAFES
+			If SH.E(ReprintPrefix & "/CMS/CSTM_SOLDTO") <> "101082" Then
+				pData1 = ""
+			End If		
+		
+		REM Case "PLPI_VETCANTEEN"
+			REM 'Code blanks out label data if SoldTo not AAFES
+			REM If SH.E(ReprintPrefix & "/CMS/CSTM_SOLDTO") <> "2003506" Then
+				REM pData1 = ""
+			REM End If	
+		
+		Case "PLPI_CUSTOMER_ADDRESS_LABEL"
+			'Added 02-23-2010 - Code blanks out label data if Print Address label flag is False
+			If SH.E(ReprintPrefix & "/CMS/CSTM_ONLY_PRINT_ADDRESS_LABEL_FLAG") <> "True" Then
+				pData1 = ""
+			End If	
+			
+		Case "PLPI_GENERICADDRESS"
+			'Added 02-23-2010 - Code blanks out label data if Print Address label flag is False
+			If SH.E(ReprintPrefix & "/CMS/CSTM_ONLY_PRINT_ADDRESS_LABEL_FLAG") = "True" Then
+				pData1 = ""
+			End If
+
+		Case "PLPI_BOL_CMS"
+			'Added 02-23-2010 - Code blanks out label data if Print Address label flag is False
+			If SH.E(ReprintPrefix & "/CMS/CSTM_ONLY_PRINT_ADDRESS_LABEL_FLAG") = "True" Then
+				pData1 = ""
+			End If			
+			
+		Case "PLPI_CMS_PALLET_LABEL"
+			'Added 03-02-2010 - Code blanks out label data if Print Address label flag is False or 
+			'ship vis is LTL Canada
+			If SH.E(ReprintPrefix & "/CMS/CSTM_ONLY_PRINT_ADDRESS_LABEL_FLAG") = "True"  _
+				Or SH.E(ReprintPrefix & "//SERVICE") = "BWTI_LTL.LTL.CANADA" Then
+				pData1 = ""
+			Else
+				'Code sets variables
+				strWarehouseCode = SH.E(ReprintPrefix & "/COMMON/SHIPPER")
+				intTotalPallets = Cnum(SH.e(ReprintPrefix & "/CMS/BOL/CSTM_BOL_TOTAL_PALLETS"))
+				intPalletLabels = 0
+				
+				'Code calls function to get number of labels per pallet
+				Call LookupPalletLabels(intPalletLabels, strWarehouseCode, intTotalPallets)
+				
+				'Codes does a find/replace to print total number of pallet labels
+				strPalletLabels = "^PQ" & Trim(intPalletLabels) & "^XZ"
+				pData1 = Replace(pData1,"^XZ",strPalletLabels)
+				pData1 = Replace(pData1,"^XA","^XA^LH0,0^LL1421")
+			End If
+
+		Case "UPS_LABEL"
+			'Code calls function that handles customer business rules for printing
+			'shipping labels
+			Call CustomerPostLabel(SH, ReprintPrefix, intTotalPackages, Source)	
+			pData1 = Replace(pData1,"^XA","^XA^LH010,020^LL1421")
+			
+		Case Else
+			'If the label or docuemnt is a ZPL document set the print speed to 6 inches per second
+			If Instr(pData1,"^XA")>0 Then
+				pData1 =Replace(pData1, "^XA","^XA^PR6,6")
+			End If
+	End Select
+End Sub	

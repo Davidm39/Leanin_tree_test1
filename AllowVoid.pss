@@ -1,0 +1,42 @@
+Function AllowVoid(IDlist)
+	'=========================================================================
+	' This subroutine runs after operator VOIDS a shipment from history screen on
+	'shipping station. Subroutine calls a funtion to update view history screen.
+	'=========================================================================
+	'VoidFlag = True
+	
+	Call DispVoid(IDlist, pdata1.cbocarrier)
+	
+	'ID is a space separated list of void ID's; do a loop for all of them
+	IDs = Split(IDlist," ")
+	
+	REM For CT = Lbound(IDs) to UBound(IDs)
+		
+		REM pkgID = Trim(IDS(ct))
+		REM 'MsgBox pkgid,,"AllowVoid - Pkgid"
+		REM Set Nz = S_History.Shipmentz.SelectNodes("/HISTORY/SHIPMENT[PACKAGE/TRACKING_NUMBER='" & pkgID &  "']")
+		REM For Each N in Nz
+			REM 'OutPutFile = "c:\test.xml"
+			REM 'saveHistoryTo (OutputFile)
+			REM 'sSQL = "Update ProShip Set ShipmentIsVoid = 1 where ShipmentTracking = '" & Trim(IDS(ct)) & "'"
+			REM 'pCN.Execute(sSQL)
+			REM PkgCt = S_History.ElementExists("/HISTORY/SHIPMENT[PACKAGE/TRACKING_NUMBER='" & pkgID &  "']/PACKAGE")
+			REM For X = 1 to PkgCt
+				REM Victim = S_History.E("/HISTORY/SHIPMENT[PACKAGE/TRACKING_NUMBER='" & pkgID &  "']/PACKAGE[" & x &  "]/TRACKING_NUMBER")
+				REM MsgBox Victim & ":" & pkgid & ":" & pkgct,,"AllowVoid - Victim"
+			REM Next
+			REM 'Since FXRS does *NOT* void the remaining pieces in an MPS shipment, we have to do this our damn selves.
+			REM 'If Left(S_History.E("/HISTORY/SHIPMENT[PACKAGE/TRACKING_NUMBER='" & pkgID &  "']/SERVICE"),9) = "BWTI_FXRS" Then
+				REM 'Step 1: Determine how many boxes in the victim shipment:
+			REM '	PkgCt = S_History.ElementExists("/HISTORY/SHIPMENT[PACKAGE/TRACKING_NUMBER='" & pkgID &  "']/PACKAGE")
+				REM 'Get each PS_VOID_ID and axe it 
+			REM '	For X = 1 to PkgCt
+			REM '		Victim = S_History.E("/HISTORY/SHIPMENT[PACKAGE/TRACKING_NUMBER='" & pkgID &  "']/PACKAGE[" & x &  "]/PS_VOID_ID")
+			REM '		SS = "<VOID><PS_VOID_ID>" & Victim & "</PS_VOID_ID></VOID>"
+			REM '		SR = ServerQuery(SS) ' Don't bother checking response... if it errored out, what would we do anyway?
+			REM '	Next 
+			REM 'End If	
+ 
+		REM Next
+	REM Next
+End Function

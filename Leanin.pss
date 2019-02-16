@@ -1,0 +1,1882 @@
+ '========================
+ 'Global Setting
+ '======================== 
+ 
+	Set FuncControl = CreateObject("SAP.Functions")
+	'Set LogonControl = CreateObject("SAP.LogonControl.1")
+	'Set oSAPConnection = LogonControl.NewConnection
+	
+	Set oBAPICtrl = CreateObject("SAP.BAPI.1")
+	Set oSAPConnection = oBAPICtrl.Connection
+	
+Function CustomerAdvancePackage(Currentbox)
+	'==================================================================
+	' This function is used to ZERO out COD amounts for cod shipments 
+	' that are interfaced code from the ShipVia will determine. 
+	'==================================================================
+	If UCase(S.E("/SHIPMENT/CMS/CSTM_INTERFACE")) <> "MANUAL" Then 
+		If CNum(s.e("SHIPMENT/PACKAGE["& Currentbox &"]/COD_AMOUNT")) > 0  then 
+			s.e("SHIPMENT/PACKAGE["& Currentbox &"]/COD_AMOUNT") = ""
+			s.e("SHIPMENT/PACKAGE["& Currentbox &"]/COD_PAYMENT_METHOD") = ""	
+		End If
+	End If
+End Function
+
+ Function CustomerLoadShipment(strDeliveryID, OkToContinue)
+	'========================================================================
+	' This functions gets ship to information from customer warehouse system. This function
+	' gets call from LOADSHIPMENT.PSS. This function also sets flag OkToContinue to
+	' TRUE or FALSE depending on what comes back from customer Warehouse system.
+	'========================================================================
+	sNode = "/SHIPMENT/CMS/SAP_TABLES/DELIVERY_HEAD"
+	
+	FuncControl.Connection = oSAPConnection	
+	Set GetSAPData = FuncControl.Add("ZLSL_GET_DELIVERY_DATA")
+	Set strDelivery			= GetSAPData.Exports("DELIVERY") 
+	Set tblDeliveryHead		= GetSAPData.Tables("ATTRIBUTE_TAB")
+	Set tblPartners		 	= GetSAPData.Tables("PARTNERS_TAB")
+	Set tblDeliveryRacks	= GetSAPData.Tables("RACK_TAB")
+	Set tblTextComments		= GetSAPData.Tables("TEXT_TAB")
+	
+	strDelivery.Value = strDeliveryID
+	
+	If GetSAPData.Call = True Then
+		IF tblDeliveryHead.RowCount > 0 Then
+			Call ReadDeliveryHeadTable(tblDeliveryHead)
+			
+			'Code checks to see if Delivery has been closed in SAP. If so then we
+			'display error message to operator and clear screen.
+			If S.E(sNode & "/DELIVERY_CLOSED") = "Y" Then
+				strErrorMessage = "Delivery is Closed in SAP and can't be shipped"
+				strWindowName = "LeaninTree.CustomerLoadShipment"
+				strWindowButtons = vbCritical + vbOkOnly
+				MsgBox strErrorMessage,strWindowButtons,strWindowName
+				OkToContinue = False
+			Else
+				Call ReadPartnersTable(tblPartners)
+				Call ReadDeliveryRacksTable(tblDeliveryRacks)
+				Call ReadTextCommentsTable(tblTextComments)
+				Call PopulateProShipShipmentInformation()
+				Call PopulateProShipInternationalInformation(strDeliveryID)
+				OkToContinue = True
+				's.e("SHIPMENT/PACKAGE[1]/MISC_REFERENCE_1") = s.e("SHIPMENT/COMMON/SHIPPER_REFERENCE")
+				's.e("SHIPMENT/PACKAGE[1]/MISC_REFERENCE_2") = Trim(Shipment.E("SHIPMENT/CMS/CSTM_PO_NUMBER"))
+			End If
+		Else
+			'Code displays error message if DeliveryID not found in SAP 
+			strErrorMessage = "Delivery not found in SAP. Please Check Delivery"
+			strWindowName = "LeaninTree.CustomerLoadShipment"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+	
+			OkToContinue = False
+		End If
+	Else
+		'Code displays error message to operator
+		strErrorMessage = "Received error from SAP Function ZLSL_GET_DELIVERY_DATA" & vbCrLF & _
+			  "If problem persists, report problem to your support department"
+		strWindowName = "Getting Delivery Information - Leanin.CustomerLoadShipment"
+		strWindowButtons = vbCritical + vbOkOnly
+		MsgBox strErrorMessage,strWindowButtons,strWindowName
+		OkToContinue = False
+	End If	
+	SetFocus ("/SHIPMENT/PACKAGE/CSTM_BOXTYPE")
+End Function
+
+Function CustomerLogon()
+	'========================================================================
+	' This function sets up parameters that will be use to log operator onto customer 
+	' systems. This function is called from USER_SCRIPTS.LOGON
+	'========================================================================
+	
+	'Code checks computer name of shipping pc to see if we are on test Shipping station.
+	'If so we then sign onto SAP test system
+	With oSAPConnection
+		.Client = "400"
+		.User = "PROSHIP_RFC"
+		.Language = "EN"
+		.MessageServer = "sapdb1"
+		.GroupName = "RFCGroup"
+		.Password = "c0ffee"
+		.System = "PRD"
+	End With
+	
+	REM With oSAPConnection
+		REM .Client = "400"
+		REM .User = "PROSHIP_RFC"
+		REM .Language = "EN"
+		REM .ApplicationServer = "SAPAPP2"
+		REM .Password = "c0ffee"
+		REM .System = "00"
+	REM End With
+	
+	Sys.UserGlobal("DataBaseName") = "SAPAPP2"
+	
+	RetCD = oSAPConnection.Logon(0,True)
+	
+	If RetCD <> True Then
+		'Code displays error message if Proship gets connected to customers host system.
+		If Err.Description <> "" Then 
+			strErrorMessage = "Received following error message when signing into SAP" & vbCrLf & vbCrLf & _
+							  Err.Number & "  " & Err.Description & vbCrLf & vbCrLf & _
+							  "Please report error message to support department."
+		Else
+			strErrorMessage = "Can't sign onto SAP" & vbCrLf & vbCrLf & _
+							  "Please report problem to support department."
+		End If
+	
+		strWindowName = "Signing into SAP - Leanin.CustomerLogon"
+		strWindowButtons = vbCritical + vbOkOnly
+		MsgBox strErrorMessage,strWindowButtons,strWindowName
+		
+		'Displays message asking operator if they want to continue.
+		strErrorMessage = "Do you want to keep shipping?" & vbCrLf & vbCrLf & _
+						  "Click YES to start Proship but you will need" & vbCrLf & _
+						  "to hand key all shipping data." & vbCrLf & vbCrLF & _
+						  "Click NO to exit Proship."
+		strWindowName = "Signing into SAP - Leanin.CustomerLogon"
+		strWindowButtons = vbQuestion + vbYesNo
+
+		'Code closes Proship it operator clicks on NO
+		If vbNo = Msgbox(strErrorMessage,strWindowButtons,strWindowName) Then
+			Set oSAPConnection = Nothing
+			BearsVsPackers()
+		End If		
+	End If
+
+End Function
+
+Function CustomerPostLabel(SH, ReprintPrefix, intTotalPackages, Source)
+	'===================================================================
+	' This handles customer business rules for printing shipping labels
+	'===================================================================
+	
+	'Code gets Carrier from Proship
+	Carrier = Left(SH.E(ReprintPrefix & "//SERVICE"),12)
+	
+	Select Case Carrier
+	
+		Case "BWTI_UPS.UPS"
+			'Code finds each label in pdata1 and if that package node contains a rack
+			'we print rack number at bottom of UPS shipping label
+			FOR intPackage = 1 TO intTotalPackages
+				strText = ""
+				strBoxType = ""
+				strFindString = ""
+				strDateText = ""
+				strFindString = "^FD" & intPackage & " OF " & intTotalPackages & "^FS"
+
+				If instr(1,pdata1,strfindString) > 0 Then
+					strBoxType = SH.E(ReprintPrefix & "//PACKAGE[" & intPackage & "]/CSTM_BOXTYPE")
+					strDatetext = "^FO650,1225^A0N,28,0^FD" & SH.E(ReprintPrefix & "//COMMON/SHIPDATE") & "^FS"
+					If strBoxType <> "" Then
+						strText = strFindString & strDatetext & "^FO380,1150^A0N,51,0^FDRACK : " & strBoxType & "^FS" & vbCrLf
+						pData1 = Replace(pData1,strFindString,strText)
+					Else
+						strText = strFindString & strDateText
+						pData1 = Replace(pData1,strFindString,strText)
+					End If
+				End If
+			NEXT
+		End Select
+End Function
+
+Function CustomerPreRateShipment()
+	'========================================================================
+	' Function gets called from PRERATESHIPMENT. Function contains customer rules
+	'========================================================================
+	
+	'Code sets variables
+	POBOXAddressFlag = False	
+	
+	'Code converts customer account number to upper case characters so Proship is happy
+	s.e("SHIPMENT/COMMON/CONSIGNEE_ACCOUNT") = Ucase(s.e("SHIPMENT/COMMON/CONSIGNEE_ACCOUNT"))
+	
+	'Code calls function that will look for PO BOX address.
+	Call FindPOBOXAddress(POBOXAddressFlag)
+	
+	'Code checks weight of shipment. If ShipVia from SAP is 90 and weight greater then
+	'2lbs. shipment will go UPS Ground. If less than shipment will go USPS Priority Mail/UPS BASIC
+	REM If Ucase(Trim(s.e("SHIPMENT/CMS/CSTM_INTERFACE"))) = "SAP" _
+		REM And Shipment.E("SHIPMENT/COMMON/SHIPPER") = "CONSUMER" Then
+		
+		REM If Trim(s.e("SHIPMENT/CMS/CSTM_CUSTOMER_SHIPMETHOD_IN")) = "90" Then
+			REM If CNum(s.e("SHIPMENT/PACKAGE[1]/WEIGHT")) < .81 Then
+				REM s.e("SHIPMENT/SERVICE") = "ELS.USPS.FCSP"
+				REM s.e("SHIPMENT/PACKAGE/PROOF") = "True"
+			
+			REM ElseIf CNum(s.e("SHIPMENT/PACKAGE[1]/WEIGHT")) > .81 _
+				REM And CNum(s.e("SHIPMENT/PACKAGE[1]/WEIGHT")) < 2.0 Then
+				REM s.e("SHIPMENT/SERVICE") = "BWTI_UPS.UPS.B"
+				REM s.e("SHIPMENT/COMMON/SHIPPER") = "CONSUMERBASIC"
+			
+			REM ElseIf CNum(s.e("SHIPMENT/PACKAGE[1]/WEIGHT")) > 2.0 _
+				REM And POBOXAddressFlag = "False" Then
+				REM s.e("SHIPMENT/SERVICE") = "BWTI_UPS.UPS.GND"
+				REM s.e("SHIPMENT/COMMON/SHIPPER") = "CONSUMER"
+				REM s.e("SHIPMENT/COMMON/CONSIGNEE_RESIDENTIAL") = "True"
+			
+			REM ElseIf CNum(s.e("SHIPMENT/PACKAGE[1]/WEIGHT")) > 2.0 _
+				REM And POBOXAddressFlag = "True" Then
+				REM s.e("SHIPMENT/SERVICE") = "BWTI_UPS.UPS.B"
+				REM s.e("SHIPMENT/COMMON/SHIPPER") = "CONSUMERBASICPOBOX"
+			REM End If
+		REM End If
+	REM End If  
+
+	REM 'lp Added 10-29-2015 - Code decides ship method depending upon weight and if  Trade shipment
+	REM 'Set shipmethod to USPS 1ST CLASS DEPENDING ON Weight
+	  REM If Trim(Shipment.E("SHIPMENT/COMMON/SHIPPER")) = "TRADE" _
+		 REM And Trim(Shipment.E("SHIPMENT/COMMON/CONSIGNEE_COUNTRY")) = "US" _
+		  REM And CNum(s.e("SHIPMENT/PACKAGE[1]/WEIGHT")) < .937 _ 
+		  REM And Shipment.E("SHIPMENT/SERVICE") <> "BWTI_UPS.UPS.2AM" _
+		  REM And Shipment.E("SHIPMENT/SERVICE") <> "BWTI_UPS.UPS.2DA" _
+		  REM And Shipment.E("SHIPMENT/SERVICE") <> "BWTI_UPS.UPS.NAM" _
+		  REM And Shipment.E("SHIPMENT/SERVICE") <> "BWTI_UPS.UPS.NDA" _
+		  REM And Shipment.E("SHIPMENT/SERVICE") <> "BWTI_UPS.UPS.NDS" Then
+		 			REM Shipment.E("SHIPMENT/SERVICE") = "ELS.USPS.FCSP"
+	 REM End If	
+	
+	'Added 06-05-2012 - Code decides ship method depending upon weight and if  
+	'address is a PO Box. This only runs when shipper is CONSUMER and domestic shipments.  LP added shipmethod_in = 90 06-06-12
+	If Trim(Shipment.E("SHIPMENT/COMMON/SHIPPER")) = "CONSUMER" _
+		And  Trim(s.e("SHIPMENT/CMS/CSTM_CUSTOMER_SHIPMETHOD_IN")) = "90" _
+		And Trim(Shipment.E("SHIPMENT/COMMON/CONSIGNEE_COUNTRY")) = "US" Then
+		
+		If POBOXAddressFlag = "True" _
+		And CNum(s.e("SHIPMENT/PACKAGE[1]/WEIGHT")) > .99 Then
+			Shipment.E("SHIPMENT/SERVICE") = "BWTI_UPS.UPS.SPP"
+			
+		ElseIf CNum(s.e("SHIPMENT/PACKAGE[1]/WEIGHT")) < .99 Then
+			Shipment.E("SHIPMENT/SERVICE") = "ELS.USPS.FCSP"
+			
+		ElseIf CNum(s.e("SHIPMENT/PACKAGE[1]/WEIGHT")) > .99 _
+			And CNum(s.e("SHIPMENT/PACKAGE[1]/WEIGHT")) < 9.0 Then
+				s.e("SHIPMENT/SERVICE") = "BWTI_UPS.UPS.SPP"
+				
+		ElseIf CNum(s.e("SHIPMENT/PACKAGE[1]/WEIGHT")) > 9.0 Then
+			s.e("SHIPMENT/SERVICE") = "BWTI_UPS.UPS.GND"
+		
+			
+		End If
+	End If
+	
+	'Code checks whether or not consignee address contains POBOX in address and then
+	'decides which shipper to use.
+	REM If Ucase(Trim(s.e("SHIPMENT/CMS/CSTM_INTERFACE"))) = "SAP" _
+		REM And s.e("SHIPMENT/SERVICE") = "BWTI_UPS.UPS.B" Then
+		
+		REM If POBOXAddressFlag = "False" Then
+			REM s.e("SHIPMENT/COMMON/SHIPPER")  = "CONSUMERBASIC"
+			REM S.E("SHIPMENT/COMMON/POB_FLAG") = "False"
+			REM Sys.RefreshScreen
+		REM Else
+			REM s.e("SHIPMENT/COMMON/SHIPPER")  = "CONSUMERBASICPOBOX"
+			REM S.E("SHIPMENT/COMMON/POB_FLAG") = "True"
+			REM Sys.RefreshScreen
+		REM End If
+	REM End If
+	
+	'Code plugs consignee phone number field with a phone number if we don't get
+	'number from Delivery for Fedex Express and Fedex Ground shipments.
+	If Left(Trim(s.e("SHIPMENT/SERVICE")),9) = "BWTI_FXRS" Then
+		If s.e("SHIPMENT/COMMON/CONSIGNEE_PHONE") = "" Then
+			s.e("SHIPMENT/COMMON/CONSIGNEE_PHONE") = "800-777-8716"
+		End If
+	End If
+
+End Function	
+
+Function CustomerPreShipShipment(sErrorField, sErrorMessage)
+	'========================================================================
+	' This function executes customer business rules and returns error messages if something
+	' is wrong. This function is called from PRESHIPSHIPMENT.PSS
+	'========================================================================
+	
+	'Code sets variables
+	POBOXAddressFlag 	= False	
+	sRacksNode 			= "/SHIPMENT/CMS/SAP_TABLES"
+	sRacksNotFound		= ""
+	sPartnerId			= ""
+	sPartners 			= ""
+	intShipmentCost		= 0.00
+	
+	'intShipmentCost = Shipment.E("/SHIPMENT/CMS/CSTM_SAP_TOTAL")
+	
+	If s.e("SHIPMENT/CMS/CSTM_INTERFACE") = "SAP" _ 
+		And s.e("SHIPMENT/COMMON/SHIPPER") = "TRADE" Then
+			sPartnerId 			= "ZN"
+			sPartners 			= "/SHIPMENT/CMS/SAP_TABLES/PARTNERS"
+	End If		
+	'Code converts customer account number to upper case characters so Proship is happy
+	s.e("SHIPMENT/COMMON/CONSIGNEE_ACCOUNT") = Ucase(s.e("SHIPMENT/COMMON/CONSIGNEE_ACCOUNT"))
+	
+	'Code stores customers fields in Extra fields that are in History table.
+	s.e("SHIPMENT/CMS/CSTM_USERTEXT2") = Trim(s.e("SHIPMENT/CMS/SAP_TABLES/DELIVERY_HEAD/INVOICE_CODE"))
+	s.e("SHIPMENT/CMS/CSTM_USERTEXT3") = Trim(s.e("SHIPMENT/CMS/SAP_TABLES/DELIVERY_HEAD/SALES_ORGANIZATION"))
+	s.e("SHIPMENT/CMS/CSTM_USERNUMBER1") = s.e("SHIPMENT/CMS/SAP_TABLES/DELIVERY_HEAD/ORDER_AMOUNT")
+	s.e("SHIPMENT/CMS/CSTM_USERNUMBER2") = s.e("SHIPMENT/CMS/CSTM_SAP_TOTAL")
+	
+	'If DeliveryID field is left blank we call function to automatically create a deliveryID
+	If s.e("SHIPMENT/COMMON/SHIPPER_REFERENCE") = "" _
+		And UCase(Trim(s.e("SHIPMENT/CMS/CSTM_INTERFACE"))) = "MANUAL" Then
+
+		Call CreateUniquePkgID()
+	End If
+	
+	'If Shipment Number field is left blank displays error message to operator 
+	'and returns them back to shipping screen.
+	If s.e("SHIPMENT/COMMON/SHIPPER_REFERENCE") = "" Then
+		sErrorField = "/SHIPMENT/COMMON/SHIPPER_REFERENCE"
+		sErrorMessage = "Delivery ID field can't be empty." & vbcrlf & _
+				"Please enter something into Shipment Number field" 
+		Exit Function
+	End If
+	
+	'Code sets on Proof of Delivery when shipping UPS Mail Innovations.
+	If Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_UPS.MI.EI"  Then
+		s.e("SHIPMENT/PACKAGE/PROOF") = "True"
+	End If
+	
+	'Code auto creates a tracking number for shipments that see have BOL screen.
+	'We are using Date and Time as tracking number
+	If Trim(s.e("SHIPMENT/SERVICE")) = "MR.LTL.WILLCALL" _
+		Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_LTL.LTL.CANADA" Then
+		'Code calls function that formats date & time into correct format for ship date
+		PackageShipmentDate = CElse(date(),"yyyymmd")
+		strCurrentTime = ""
+		Call FormatShippedTimeHHMMSS(strCurrentTime)
+		PackageShipmentDate = Trim(PackageShipmentDate) & Trim(strCurrentTime)
+		S.E("SHIPMENT/PACKAGE/TRACKING_NUMBER") = PackageShipmentDate
+	End If	
+	
+	'Added 02-01-2010 Code changes UPS Basic shipper and sets flags based upon whether
+	'or not Consignee address contains a PO BOX address
+	If S.E("SHIPMENT/SERVICE") = "BWTI_UPS.UPS.B" Then
+		'Code calls function that wil look for PO BOX address.
+		Call FindPOBOXAddress(POBOXAddressFlag)
+		
+		If POBOXAddressFlag = "False" Then
+			s.e("SHIPMENT/COMMON/SHIPPER")  = "CONSUMERBASIC"
+			S.E("SHIPMENT/COMMON/POB_FLAG") = "False"
+			S.Rate 0
+			Sys.RefreshScreen
+		Else
+			s.e("SHIPMENT/COMMON/SHIPPER")  = "CONSUMERBASICPOBOX"
+			S.E("SHIPMENT/COMMON/POB_FLAG") = "True"
+			S.Rate 0
+			Sys.RefreshScreen
+		End If
+	End If
+	
+	'Added 06-04-2014 - Code populates Package level Miscellaneous reference fields 
+	'for manuals shipments
+	If UCase(Trim(Shipment.E("SHIPMENT/CMS/CSTM_INTERFACE"))) = "MANUAL" Then
+		Shipment.E("SHIPMENT/PACKAGE[1]/MISC_REFERENCE_1") = Shipment.E("SHIPMENT/COMMON/SHIPPER_REFERENCE")
+		Shipment.E("SHIPMENT/PACKAGE[1]/MISC_REFERENCE_2") = Shipment.E("SHIPMENT/CMS/CSTM_PO_NUMBER") 
+	End If
+	
+	'Added 01-25-2015 - Code sets return address and department when Oracle delivery starts ca1
+	If Left(UCase(Shipment.E("/SHIPMENT/COMMON/SHIPPER_REFERENCE")),3) 	= "CA1" Then
+		Shipment.E("/SHIPMENT/CMS/CSTM_DEPARTMENT") 					= "CG"
+		Shipment.E("/SHIPMENT/COMMON/SHIPPER") 							= "CONSUMER"
+		Shipment.E("/SHIPMENT/COMMON/RETURN_ADDRESS_COMPANY") 			= "CARD GNOME"
+		Shipment.E("/SHIPMENT/COMMON/RETURN_ADDRESS_ADDRESS1") 			= "P.O. BOX 3740"
+		Shipment.E("/SHIPMENT/COMMON/RETURN_ADDRESS_CITY") 				= "BOULDER"
+		Shipment.E("/SHIPMENT/COMMON/RETURN_ADDRESS_STATE") 			= "CO"
+		Shipment.E("/SHIPMENT/COMMON/RETURN_ADDRESS_POSTALCODE")		= "80307"		
+	End If
+	
+	
+	
+	'Added 08-20-2015 - Code doesn't run automatic Delivery rack creation for LTL or Manual shipments
+	If Left(Shipment.E("/SHIPMENT/SERVICE"),8) <> "BWTI_LTL" _
+		And Left(Shipment.E("/SHIPMENT/SERVICE"),6) <> "MR.LTL" _ 
+		And Left(Shipment.E("/SHIPMENT/SERVICE"),7) <> "BWTI_MR" Then	
+		
+		'Added 04-29-2015 - Code finds number of Delivery racks on SAP Shipment
+		'and builds a package node for each RACK	
+		If Shipment.ElementExists(sRacksNode & "/DELIVERY_RACKS") > 0 Then
+			 Call BuildPackageNodesfromRacksLeaninTree(sRacksNotFound)
+			
+			 'Code displays error message if any Rack not found in CSTM.BoxDimension table
+			 If Trim(sRacksNotFound) <> "" Then
+				sErrorField   = "/SHIPMENT/COMMON/SHIPPER_REFERENCE"
+				sErrorMessage = "Racks below not found in CSTM(BoxDimension) table" & Vbcrlf & Vbcrlf & _
+								sRacksNotFound & Vbcrlf & _
+								"Press F4 to cancel shipment. Add missing Racks to table" & vbCrLF & _
+								"CSTM(BoxDimension) then scan SAP Delivery ID again."
+			End If
+		End If
+	End If
+	
+	'Added 01-17-2016 - Code stops shipments when processing UPS, package count equals 1 and billed weight > 100 lp changed
+	If Left(Shipment.E("/SHIPMENT/SERVICE"),8) = "BWTI_UPS" Then
+		If Cnum(Shipment.TP) = 1 _
+			And CNum(SHIPMENT.E("/SHIPMENT/COMMON/BILLED_WEIGHT") > 100 ) Then
+		
+			sErrorField = "/SHIPMENT/COMMON/SHIPPER_REFERENCE"
+			sErrorMessage = "Please check weight of current shipment especially BILLED OR DIM WEIGHT." 
+			Exit Function
+		End If
+	End If
+	
+	'Code updates reference fields for all packages on mailroom shipments
+	If UCase(s.e("SHIPMENT/CMS/CSTM_INTERFACE")) = "MAILROOM" Then
+		For i=1 to Shipment.Elementexists("/SHIPMENT/PACKAGE")
+			Shipment.E("/SHIPMENT/PACKAGE[" & i & "]/MISC_REFERENCE_1") = "MM"
+			Shipment.E("/SHIPMENT/PACKAGE[" & i & "]/MISC_REFERENCE_2") = Shipment.E("/SHIPMENT/COMMON/SHIPPER_REFERENCE")
+		Next
+	End If
+	
+	REM 'Added 05-12-20016 - Code sets Murdoch UPS shipments to 3rd party bill 
+		REM If instr(Shipment.E("SHIPMENT/SERVICE"), "BWTI_UPS") > 0 _
+		REM And Shipment.E(sPartners & "[PARTNER_ROLE='" & sPartnerID & "']/PARTNER_ID") = "112643" Then
+			REM Shipment.E("SHIPMENT/COMMON/CONSIGNEE_ACCOUNT")	= "75F65R" 
+			REM Shipment.E("SHIPMENT/COMMON/TPBILL_COMPANY") 	= "MURDOCHS LLC HQ AND STORE" 
+			REM Shipment.E("SHIPMENT/COMMON/TPBILL_ADDRESS1") 	= "2275 N 7th AVE" 
+			REM Shipment.E("SHIPMENT/COMMON/TPBILL_CITY") 		= "BOZEMAN"
+			REM Shipment.E("SHIPMENT/COMMON/TPBILL_STATE") 		= "MT"
+			REM Shipment.E("SHIPMENT/COMMON/TPBILL_POSTALCODE") = "59715"  
+			REM Shipment.E("SHIPMENT/COMMON/TPBILL_COUNTRY") 	= "US"
+			REM Shipment.E("/SHIPMENT/COMMON/TERMS") 			= "THIRD_PARTY"
+			REM Shipment.E("/SHIPMENT/PACKAGE[1]/TERMS") 		= "THIRD_PARTY"
+	REM End If
+	
+	'Added 05/22/2017 Code allows operator to change ship method for shipments 
+	'weighting < 1lb and not going by air.
+	REM If Trim(Shipment.E("SHIPMENT/COMMON/CONSIGNEE_COUNTRY")) = "US" _
+		REM And CNum(s.e("SHIPMENT/PACKAGE[1]/WEIGHT")) < .937 _ 
+		REM And Shipment.E("SHIPMENT/SERVICE") <> "BWTI_UPS.UPS.2AM" _
+		REM And Shipment.E("SHIPMENT/SERVICE") <> "BWTI_UPS.UPS.2DA" _
+		REM And Shipment.E("SHIPMENT/SERVICE") <> "BWTI_UPS.UPS.NAM" _
+		REM And Shipment.E("SHIPMENT/SERVICE") <> "BWTI_UPS.UPS.NDA" _
+		REM And Shipment.E("SHIPMENT/SERVICE") <> "BWTI_UPS.UPS.NDS" Then
+		
+		REM 'Code builds message that will be displayed to operator
+		REM strErrorMessage = "Delivery " & sDeliveryid & " could be processed by USPS First Class service" & vbCrlf & vbCrlf &_
+						 REM "Click OK" & vbTab & vbTab & "- Process delivery using current ship method." & vbCrlf & _
+						 REM "Click CANCEL" & vbTab & "- Change current ship method for delivery"
+		
+		REM strWindowButtons = vbInformation + vbOKCancel
+		REM strWindowName = "CustomerPreShipShipmnt - Checking services"
+		
+		REM 'Displays message to operator asking if they want to continue  or cancel shipment.
+		REM If vbCancel = Msgbox(strErrorMessage,strWindowButtons,strWindowName) Then
+			REM sErrorMessage = "This will allow you to change service" 
+			REM sErrorField = "/SHIPMENT/SERVICE"	
+			REM Exit Function
+		REM End If
+	REM End If
+		
+End Function
+
+Function CustomerPostShipShipment()
+	'========================================================================
+	' This functions updates customer warehouse system with shipment information. This 
+	' function gets called from POSTSHIPSHIPMENT.PSS. 
+	'========================================================================
+	
+	'Set up variables
+	strCurrentTime = ""
+	strDeliveryID = Trim(s.e("SHIPMENT/COMMON/SHIPPER_REFERENCE"))
+	strRFCAction = "I"
+	sDelivery_Head	= "/SHIPMENT/CMS/SAP_TABLES/DELIVERY_HEAD"
+	
+	'Code call function creates RACK nodes from PACKAGE nodes if CSTM_BOXTYPE is not empty
+	Call CreateRackNodes()
+
+	'Code calls function that formats PC time into HHMMSS
+	Call FormatShippedTimeHHMMSS(strCurrentTime)
+	
+	'07-31-2009 - Code calls function to parse out carrier and service from Proship service field.
+	ProShipCarrier = s.e("SHIPMENT/SERVICE")
+	Call ParseCarrierAndService (ProShipCarrier, CarrierName, CarrierService)
+	
+	'08-19-2009 - Code gets today's date and proship ship date
+	strTodaydate = Celse (now, "yyyymmdd")
+	strManifestDate = CElse(s.e("SHIPMENT/COMMON/SHIPDATE"),"yyyymmdd")
+	
+	'07-31-2009 - Code converts carrier name to FXRS if FedEx Ground Shipment
+	If CarrierName = "CAFE" Then
+		CarrierName = "FXRS"
+	ElseIf CarrierName = "ELS" Then
+		CarrierName = "USPS"
+	End If
+	
+	If UCase(s.e("SHIPMENT/CMS/CSTM_INTERFACE")) <> "MANUAL" _
+		And UCase(s.e("SHIPMENT/CMS/CSTM_INTERFACE")) <> "MAILROOM" Then
+	
+		'Code builds Objects for RFC call
+		FuncControl.Connection = oSAPConnection	
+		Set WriteSAPData = FuncControl.Add("ZLSL_SEND_DELIVERY_DATA")
+		Set strDelivery			= WriteSAPData.Exports("DELIVERY") 
+		Set strSalesOrg			= WriteSAPData.Exports("SALES_ORG") 
+		Set strAction			= WriteSAPData.Exports("ACTION") 
+		Set strInvoiceInBox		= WriteSAPData.Exports("INVOICE_IN_BOX")
+		Set strFutureShipDate	= WriteSAPData.Exports("FUTURE_SHIP_DATE") 		
+		Set tblManifest			= WriteSAPData.Tables("MANIFEST_TAB")
+		Set tblReturnError	 	= WriteSAPData.Tables("MANIFEST_ERROR_TAB")
+		
+		'Code sets field values that are passed to SAP that aren't part of a table
+		strDelivery.Value = Trim(s.e("SHIPMENT/COMMON/SHIPPER_REFERENCE"))
+		strSalesOrg.Value = Trim(s.e("SHIPMENT/CMS/SAP_TABLES/DELIVERY_HEAD/SALES_ORGANIZATION"))
+		strAction.Value = strRFCAction
+		strInvoiceInBox.Value = Trim(s.e("SHIPMENT/CMS/SAP_TABLES/DELIVERY_HEAD/INVOICE_CODE"))
+		strCustomerHost = s.e("SHIPMENT/CMS/CSTM_INTERFACE")
+		'08-19-2009 - Code checks to see if shipment is a future shipment
+		If strManifestDate = strTodayDate Then
+			strFutureShipDate.Value = 0
+		Else
+			strFutureShipDate.Value = strManifestDate
+		End If
+		
+		'Code reads through each Proship Package node and creates a record in table that gets sent back
+		'to customers host system.
+		For iPackage = 1 to Shipment.TP
+			tblManifest.Rows.Add
+			tblManifest.Value(iPackage,"MNORD") = Trim(s.e("SHIPMENT/COMMON/SHIPPER_REFERENCE"))
+			
+			'Code decides system code depending upon Sales Organization
+			If Trim(s.e("SHIPMENT/CMS/SAP_TABLES/DELIVERY_HEAD/SALES_ORGANIZATION")) = "0010" Then
+				tblManifest.Value(iPackage,"MNSYCD") = "1"
+			Else
+				tblManifest.Value(iPackage,"MNSYCD") = "2"
+			End If
+			
+			tblManifest.Value(iPackage,"MNUNID") = Trim(s.e("SHIPMENT/PACKAGE[1]/PS_VOID_ID")) & iPackage
+			tblManifest.Value(iPackage,"MNDTE") = CElse(s.e("SHIPMENT/COMMON/SHIPDATE"),"yyyymmdd")
+			tblManifest.Value(iPackage,"MNTIME") = strCurrentTime
+			tblManifest.Value(iPackage,"MNSYS") = Trim(s.e("SHIPMENT/CMS/CSTM_SHIPPERID"))
+			tblManifest.Value(iPackage,"MNTRAN") = " "
+			tblManifest.Value(iPackage,"MNSEQ") = iPackage	
+			tblManifest.Value(iPackage,"MNMODE") = Trim(s.e("SHIPMENT/CMS/CSTM_CUSTOMER_SHIPMETHOD_OUT"))
+			tblManifest.Value(iPackage,"MNPKG") = Shipment.TP
+			tblManifest.Value(iPackage,"MNLTL") = Space(02)
+			tblManifest.Value(iPackage,"MNZIP") = Left(Trim(s.e("SHIPMENT/COMMON/CONSIGNEE_POSTALCODE")),5)
+			tblManifest.Value(iPackage,"MNWGT") = Trim(s.e("SHIPMENT/PACKAGE[" & iPackage & "]/WEIGHT"))	
+			tblManifest.Value(iPackage,"MNZONE") = Trim(s.e("SHIPMENT/COMMON/ZONE"))	
+			tblManifest.Value(iPackage,"MNCAR") = Space(24)
+			tblManifest.Value(iPackage,"MNTRCK") = Trim(s.e("SHIPMENT/PACKAGE[" & iPackage & "]/TRACKING_NUMBER"))	
+			tblManifest.Value(iPackage,"MNBASE") = Trim(s.e("SHIPMENT/COMMON/BASE"))	
+			tblManifest.Value(iPackage,"MNUCC") = Trim(s.e("SHIPMENT/PACKAGE[" & iPackage & "]/CSTM_UCC_NUMBER"))		
+			
+		If CNum(s.e("SHIPMENT/CMS/CSTM_COD_AMOUNT")) > 0 Then
+			tblManifest.Value(iPackage,"MNCODV") = CNum(s.e("SHIPMENT/COMMON/COD_FEE"))		
+			tblManifest.Value(iPackage,"MNCOD") = CNum(s.e("SHIPMENT/CMS/CSTM_COD_AMOUNT"))	
+		Else
+			tblManifest.Value(iPackage,"MNCODV") = 0.00	
+			tblManifest.Value(iPackage,"MNCOD") = 0.00
+		End If
+			
+			tblManifest.Value(iPackage,"MNCODC") = 0.00
+			tblManifest.Value(iPackage,"MNDVC") = 0.00
+			tblManifest.Value(iPackage,"MNDVIA") = 0.00
+			tblManifest.Value(iPackage,"MNAIA") = 0.00
+			tblManifest.Value(iPackage,"MNAIC") = 0.00
+			tblManifest.Value(iPackage,"MNAODC") = 0.00
+			tblManifest.Value(iPackage,"MNCTC") = 0.00
+			tblManifest.Value(iPackage,"MNHFEE") = 0.00
+			tblManifest.Value(iPackage,"MNAFEE") = 0.00
+			
+			'Added 08-12-2016 - Populates dollar amount field for shipments that fall through select process below.
+			tblManifest.Value(iPackage,"MNNET") = CNum(s.e("SHIPMENT/COMMON/BASE")) + CNum(s.e("SHIPMENT/COMMON/SPECIAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+			tblManifest.Value(iPackage,"MNTCHG") = CNum(s.e("SHIPMENT/COMMON/BASE")) + CNum(s.e("SHIPMENT/COMMON/SPECIAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))
+			
+		'Code removes discount from total price for FedEx  express and ground shipments. That total amount being
+			'passed back to customer will be Base + Special &&lp changed 060209
+	Select Case	(strCustomerHost)
+	'Employee or Department Orders
+	Case "Empl-DeptSAP"  
+		If Left(Trim(s.e("SHIPMENT/SERVICE")),14) = "BWTI_FXRS.FXRS" _
+		And Shipment.E("/SHIPMENT/COMMON/CONSIGNEE_COUNTRY") = "US" Then
+		'Added 05-12-2016 - Domestic shipment pass back published rate
+					tblManifest.Value(iPackage,"MNNET") = CNum(s.e("SHIPMENT/COMMON/BASE")) + CNum(s.e("SHIPMENT/COMMON/SPECIAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+					tblManifest.Value(iPackage,"MNTCHG") = CNum(s.e("SHIPMENT/COMMON/BASE")) + CNum(s.e("SHIPMENT/COMMON/SPECIAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+	    End If
+
+		If Left(Trim(s.e("SHIPMENT/SERVICE")),14) = "BWTI_FXRS.FXRS" _
+		And Shipment.E("/SHIPMENT/COMMON/CONSIGNEE_COUNTRY") <> "US" Then	
+		'Added 05-12-2016 - International TRADE shipment pass back Leaning Tree FedEx Discount
+					tblManifest.Value(iPackage,"MNNET") = CNum(s.e("SHIPMENT/COMMON/TOTAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+					tblManifest.Value(iPackage,"MNTCHG") = CNum(s.e("SHIPMENT/COMMON/TOTAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))
+		End If
+
+		If Left(Trim(s.e("SHIPMENT/SERVICE")),14) = "BWTI_FXRS.CAFE" _
+		And Shipment.E("/SHIPMENT/COMMON/CONSIGNEE_COUNTRY") = "US" Then
+		'Added 05-12-2016 - Domestic shipment pass back published rate
+					tblManifest.Value(iPackage,"MNNET") = CNum(s.e("SHIPMENT/COMMON/BASE")) + CNum(s.e("SHIPMENT/COMMON/SPECIAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+					tblManifest.Value(iPackage,"MNTCHG") = CNum(s.e("SHIPMENT/COMMON/BASE")) + CNum(s.e("SHIPMENT/COMMON/SPECIAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+		End If
+
+		If Left(Trim(s.e("SHIPMENT/SERVICE")),14) = "BWTI_FXRS.CAFE" _
+		And Shipment.E("/SHIPMENT/COMMON/CONSIGNEE_COUNTRY") <> "US" Then	
+					'Added 05-12-2016 - International TRADE shipment pass back Leaning Tree FedEx Discount
+						tblManifest.Value(iPackage,"MNNET") = CNum(s.e("SHIPMENT/COMMON/TOTAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+						tblManifest.Value(iPackage,"MNTCHG") = CNum(s.e("SHIPMENT/COMMON/TOTAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+	    End If
+
+		If Left(Trim(s.e("SHIPMENT/SERVICE")),9) = "BWTI_UPS." Then
+					'Added 05-17-2016 - SAP field DELIVERY_HEAD.DELIVERY_TYPE empty pass back 30% discount
+					tblManifest.Value(iPackage,"MNNET") = (CNum(s.e("SHIPMENT/COMMON/TOTAL")) * .70) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+					tblManifest.Value(iPackage,"MNTCHG") = (CNum(s.e("SHIPMENT/COMMON/TOTAL")) * .70)  - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))
+		End If
+
+		If Left(Trim(s.e("SHIPMENT/SERVICE")),9) = "ELS.USPS." Then
+					tblManifest.Value(iPackage,"MNNET") = CNum(s.e("SHIPMENT/COMMON/BASE")) + CNum(s.e("SHIPMENT/COMMON/SPECIAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+					tblManifest.Value(iPackage,"MNTCHG") = CNum(s.e("SHIPMENT/COMMON/BASE")) + CNum(s.e("SHIPMENT/COMMON/SPECIAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))		
+		End If	
+		
+		'Consumer Orders
+   Case "SAPCONS" 
+
+		If Left(Trim(s.e("SHIPMENT/SERVICE")),14) = "BWTI_FXRS.FXRS" _
+				Or Left(Trim(s.e("SHIPMENT/SERVICE")),14) = "BWTI_FXRS.CAFE" Then
+				'Added 05-12-2016 - pass back published rate
+					tblManifest.Value(iPackage,"MNNET") = CNum(s.e("SHIPMENT/COMMON/BASE")) + CNum(s.e("SHIPMENT/COMMON/SPECIAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+					tblManifest.Value(iPackage,"MNTCHG") = CNum(s.e("SHIPMENT/COMMON/BASE")) + CNum(s.e("SHIPMENT/COMMON/SPECIAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+		End If
+
+		If Left(Trim(s.e("SHIPMENT/SERVICE")),9) <> "BWTI_FXRS" Then
+					tblManifest.Value(iPackage,"MNNET") = CNum(s.e("SHIPMENT/COMMON/TOTAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+					tblManifest.Value(iPackage,"MNTCHG") = CNum(s.e("SHIPMENT/COMMON/TOTAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+		End If
+
+		
+			'Standard Trade Shipments
+	Case "SAP" 
+
+		If Left(Trim(s.e("SHIPMENT/SERVICE")),14) = "BWTI_FXRS.FXRS" _
+		And Shipment.E("/SHIPMENT/COMMON/CONSIGNEE_COUNTRY") = "US" Then
+		'Added 05-12-2016 - Domestic shipment pass back published rate 
+					tblManifest.Value(iPackage,"MNNET") = CNum(s.e("SHIPMENT/COMMON/BASE")) + CNum(s.e("SHIPMENT/COMMON/SPECIAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+					tblManifest.Value(iPackage,"MNTCHG") = CNum(s.e("SHIPMENT/COMMON/BASE")) + CNum(s.e("SHIPMENT/COMMON/SPECIAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+	    End If
+
+		If Left(Trim(s.e("SHIPMENT/SERVICE")),14) = "BWTI_FXRS.FXRS" _
+		And Shipment.E("/SHIPMENT/COMMON/CONSIGNEE_COUNTRY") <> "US" Then	
+		'Added 05-12-2016 - International TRADE shipment pass back Leaning Tree FedEx Discount
+					tblManifest.Value(iPackage,"MNNET") = CNum(s.e("SHIPMENT/COMMON/TOTAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+					tblManifest.Value(iPackage,"MNTCHG") = CNum(s.e("SHIPMENT/COMMON/TOTAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))
+		End If
+
+		If Left(Trim(s.e("SHIPMENT/SERVICE")),14) = "BWTI_FXRS.CAFE" _
+		And Shipment.E("/SHIPMENT/COMMON/CONSIGNEE_COUNTRY") = "US" Then
+		'Added 05-12-2016 - Domestic shipment pass back published rate
+					tblManifest.Value(iPackage,"MNNET") = CNum(s.e("SHIPMENT/COMMON/BASE")) + CNum(s.e("SHIPMENT/COMMON/SPECIAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+					tblManifest.Value(iPackage,"MNTCHG") = CNum(s.e("SHIPMENT/COMMON/BASE")) + CNum(s.e("SHIPMENT/COMMON/SPECIAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+		End If
+
+		If Left(Trim(s.e("SHIPMENT/SERVICE")),14) = "BWTI_FXRS.CAFE" _
+		And Shipment.E("/SHIPMENT/COMMON/CONSIGNEE_COUNTRY") <> "US" Then	
+					'Added 05-12-2016 - International TRADE shipment pass back Leaning Tree FedEx Discount
+						tblManifest.Value(iPackage,"MNNET") = CNum(s.e("SHIPMENT/COMMON/TOTAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+						tblManifest.Value(iPackage,"MNTCHG") = CNum(s.e("SHIPMENT/COMMON/TOTAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+	    End If
+				'DON'T ADD IN ADDTL HANDLING IF EXEMPT PACKAGES Shipment.E("/SHIPMENT/CMS/CSTM_ADDITIONAL_HANDLING_EXEMPTION_TOTAL")
+		If Left(Trim(s.e("SHIPMENT/SERVICE")),8) = "BWTI_UPS" Then
+		
+	'Call Over48AndUnder60Exemptions() 'LP commented out the code for Over48andUnder60 per Tom's request lines 644 - 651 but left the function in user_scripts 5.17.17
+					
+					'intShipmentCost = CNum(s.e("SHIPMENT/COMMON/TOTAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	- CNum(Shipment.e("/SHIPMENT/CMS/CSTM_ADDITIONAL_HANDLING_EXEMPTION_TOTAL"))
+					
+					'tblManifest.Value(iPackage,"MNNET") = intShipmentCost
+					'tblManifest.Value(iPackage,"MNTCHG") = intShipmentCost
+					's.e("SHIPMENT/CMS/CSTM_USERNUMBER2") = intShipmentCost
+					's.e("SHIPMENT/CMS/CSTM_SAP_TOTAL") = intShipmentCost
+					tblManifest.Value(iPackage,"MNNET") = CNum(s.e("SHIPMENT/COMMON/TOTAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+					tblManifest.Value(iPackage,"MNTCHG") = CNum(s.e("SHIPMENT/COMMON/TOTAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+		End If
+		
+		If Left(Trim(s.e("SHIPMENT/SERVICE")),9) = "ELS.USPS." Then
+					tblManifest.Value(iPackage,"MNNET") = CNum(s.e("SHIPMENT/COMMON/BASE")) + CNum(s.e("SHIPMENT/COMMON/SPECIAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+					tblManifest.Value(iPackage,"MNTCHG") = CNum(s.e("SHIPMENT/COMMON/BASE")) + CNum(s.e("SHIPMENT/COMMON/SPECIAL")) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))		
+		End If	
+		
+End Select		
+			
+			tblManifest.Value(iPackage,"MNTXT1") = Space(10)
+			tblManifest.Value(iPackage,"MNTXT2") = Space(10)
+			tblManifest.Value(iPackage,"MNTXT3") = Space(20)
+			tblManifest.Value(iPackage,"MNCMNT") = "0"
+			tblManifest.Value(iPackage,"MNPOST") = " "
+			
+			'Added 04-05-2013 - Code checks for WILLCALL shipment and changes carrier
+			'that Proship passes back to SAP.
+			If Shipment.E("SHIPMENT/SERVICE") = "MR.LTL.WILLCALL" Then
+				tblManifest.Value(iPackage,"MNCARRIER") = "WILLCA"
+				tblManifest.Value(iPackage,"MNSERVICE") = "WILLCA"
+			Else
+				'07-31-2009 -Added to fields that get past back to customer
+				tblManifest.Value(iPackage,"MNCARRIER") = Left(Trim(CarrierName),4)
+				tblManifest.Value(iPackage,"MNSERVICE") = Left(Trim(CarrierService),6)
+			End If
+			
+		Next
+		
+		'Code sends shipment information to RFC call. Then looks to see if RFC call returns error. Code displays any error messages
+		'return from RFC call.
+		If WriteSAPData.Call = True Then
+			If tblReturnError.RowCount > 0 Then
+				strErrorMessage = "Delivery " & UCASE(strDeliveryID) & " received error message below when updating SAP" & vbCrLF & vbCrLF & _
+								  tblReturnError(1,"ERROR_CODE") & " | " & tblReturnError(1,"ERROR_DESC") & vbCrLf & vbCrLf & _
+								  "Please VOID shipment and re-ship. If problem persists," & vbCrLf & _
+								  "report problem to your support department"
+				strWindowName = "Updating SAP - Leanin.CustomerPostShipShipment"
+				strWindowButtons = vbCritical + vbOkOnly
+				MsgBox strErrorMessage,strWindowButtons,strWindowName
+			End If
+		Else
+			strErrorMessage = "Received error from SAP Function ZLSL_SEND_DELIVERY_DATA" & vbCrLF & _
+				  "Please VOID shipment and re-ship. If problem persists," & vbCrLf & _
+				  "report problem to your support department"
+			strWindowName = "Updating SAP - Leanin.CustomerPostShipShipment"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+		End If
+	End If
+	
+	'Code empties objects
+	Set strDelivery	= Nothing 
+	Set strSalesOrg = Nothing 
+	Set strAction = Nothing
+	Set strInvoiceInBox	= Nothing
+	Set strFutureShipDate = Nothing 		
+	Set tblManifest	= Nothing 
+	Set tblReturnError = Nothing
+
+End Function
+
+Function CustomerPostVoid(strPSVoidId, strDeliveryID, strInterfaceSource, strPackageID)
+	'========================================================================
+	' This functions VOID shipment in customer warehouse system. This function gets called
+	' from POSTVOID.PSS. This function will display error message to operator if shipment
+	' can't be voided.
+	'========================================================================
+		'Set up variables
+	strCurrentTime = ""
+	VoidDate = Celse (Now, "yyyymmdd")
+	strRFCAction = "V"
+
+	'Code calls function that formats PC time into HHMMSS
+	Call FormatShippedTimeHHMMSS(strCurrentTime)	
+		
+	If UCase(Trim(strInterfaceSource)) <> "MANUAL" Then
+	
+		Query = "Select PackageID, PSVoidID, UserText2, UserText3, CurBox, ShipDate " & _
+				"FROM CSTM.History " & _
+				"Where PSVoidID = '" & Trim(strPSVoidID) & "'"
+	
+		Set rsHistory = pCN.Execute(Query)
+		rsHistory.MoveFirst
+		
+		'Code builds Objects for RFC call
+		FuncControl.Connection = oSAPConnection	
+		Set WriteSAPData = FuncControl.Add("ZLSL_SEND_DELIVERY_DATA")
+		Set strDelivery			= WriteSAPData.Exports("DELIVERY") 
+		Set strSalesOrg			= WriteSAPData.Exports("SALES_ORG") 
+		Set strAction			= WriteSAPData.Exports("ACTION") 
+		Set strInvoiceInBox		= WriteSAPData.Exports("INVOICE_IN_BOX")
+		Set strFutureShipDate	= WriteSAPData.Exports("FUTURE_SHIP_DATE") 		
+		Set tblManifest			= WriteSAPData.Tables("MANIFEST_TAB")
+		Set tblReturnError	 	= WriteSAPData.Tables("MANIFEST_ERROR_TAB")
+		
+		'Code sets field values that are passed to SAP that aren't part of a table
+		strDelivery.Value = Trim(rsHistory("PackageID").Value)
+		strSalesOrg.Value = Trim(rsHistory("UserText3").Value)
+		strAction.Value = strRFCAction
+		strInvoiceInBox.Value = Trim(rsHistory("UserText2").Value)
+		strFutureShipDate.Value = 0	
+
+		iPackage = 1
+		
+		'Code builds table MANIFEST_TAB for customer RFC. This table contains detail about each package
+		Do While Not rsHistory.eof
+			tblManifest.Rows.Add
+			tblManifest.Value(iPackage,"MNORD") = Trim(rsHistory("PackageID").Value)
+			
+			'Code decides system code depending upon Sales Organization
+			If Trim(rsHistory("UserText3").Value) = "0010" Then
+				tblManifest.Value(iPackage,"MNSYCD") = "1"
+			Else
+				tblManifest.Value(iPackage,"MNSYCD") = "2"
+			End If
+			
+			tblManifest.Value(iPackage,"MNUNID") = Trim(rsHistory("PSVoidID").Value) & Trim(rsHistory("CurBox").Value)
+			tblManifest.Value(iPackage,"MNDTE") = VoidDate
+			tblManifest.Value(iPackage,"MNTIME") = strCurrentTime
+			iPackage = iPackage + 1
+			rsHistory.MoveNext
+		Loop
+
+		'Code sends Void information to RFC call. Then looks to see if RFC call returns error. Code displays any error messages
+		'return from RFC call.
+		If WriteSAPData.Call = True Then
+			If tblReturnError.RowCount > 0 Then
+				strErrorMessage = "Delivery " & UCASE(strDeliveryID) & " received error message VOIDING Delivery in SAP" & vbCrLF & vbCrLF & _
+								  tblReturnError(1,"ERROR_CODE") & " | " & tblReturnError(1,"ERROR_DESC") & vbCrLf & vbCrLf & _
+								  "Delivery didn't VOID shipment in SAP." & vbCrLf & _
+								  "Report problem to your support department"
+				strWindowName = "Voiding SAP - Leanin.CustomerPostShipShipment"
+				strWindowButtons = vbCritical + vbOkOnly
+				MsgBox strErrorMessage,strWindowButtons,strWindowName
+			End If
+		Else
+			strErrorMessage = "Received error from SAP Function ZLSL_SEND_DELIVERY_DATA" & vbCrLF & _
+				  "Delivery didn't VOID shipment in SAP." & vbCrLf & _
+				  "Report problem to your support department"
+			strWindowName = "Voiding SAP - Leanin.CustomerPostShipShipment"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+		End If
+	End If
+	
+	'Code empties objects
+	Set strDelivery	= Nothing 
+	Set strSalesOrg = Nothing 
+	Set strAction = Nothing
+	Set strInvoiceInBox	= Nothing
+	Set strFutureShipDate = Nothing 		
+	Set tblManifest	= Nothing 
+	Set tblReturnError = Nothing
+
+End Function
+
+Function CustomerStartStopClient()
+	'========================================================================
+	' This function sets up customer data connection and customer customizations to ProShip
+	' shipping screen. This function is called from STARTSTOPCLIENT.PSS
+	'========================================================================
+	
+	'Create entries on User Menu
+	AddUserMenu 15, "Import SAP Batch File"
+	AddUserMenu 16, "Process SAP Batch Files"
+	AddUserMenu 17, "Delete Batch File", True
+	AddUserMenu 18, "Import Customer Batch File"
+	AddUserMenu 19, "Process Customer Batch File", True
+	AddUserMenu 20, "Mailroom File Import", True
+	
+	'Code changes to node values in Master_SH.XML file.
+	Sys.E("/SYSTEM/SHIPMENT_MASTER/SHIPPER_REFERENCE/VALIDATE") = "0"
+	Sys.E("/SYSTEM/SHIPMENT_MASTER/SHIPPER_REFERENCE/PLAINTEXT") = "Delivery ID"
+	Sys.E("/SYSTEM/SHIPMENT_MASTER/BILLED_WEIGHT/PLAINTEXT") = "Dim Weight"
+	Sys.E("/SYSTEM/SHIPMENT_MASTER/BILLED_WEIGHT/ENABLED") = "1"
+	Sys.E("/SYSTEM/SHIPMENT_MASTER/SPECIAL/PLAINTEXT") = "Special Services/Fuel"
+	Sys.E("/SYSTEM/SHIPMENT_MASTER/CONSIGNEE_COMPANY/PLAINTEXT") = "Company/Name"
+	Sys.E("/SYSTEM/SHIPMENT_MASTER/SHIPPER/PLAINTEXT") = "Location"
+	
+	'Code changes to node values in Custom_SH.XML file.
+	Sys.E("/SYSTEM/SHIPMENT_MASTER/CSTM_DEPARTMENT/PLAINTEXT") = "Department"
+	Sys.E("/SYSTEM/SHIPMENT_MASTER/CSTM_DEPARTMENT/D_TYPE") = "TEXTBOX"
+	Sys.E("/SYSTEM/SHIPMENT_MASTER/CSTM_PROJECT_NUMBER/D_TYPE") = "TEXTBOX"
+	Sys.E("/SYSTEM/SHIPMENT_MASTER/CSTM_WORKSTATIONID/ENABLED") = "1"
+	Sys.E("/SYSTEM/SHIPMENT_MASTER/CSTM_SHIPPERID/ENABLED") = "1"
+	Sys.E("/SYSTEM/SHIPMENT_MASTER/CSTM_SHIPPERID/PLAINTEXT") = "Shipped By"
+	Sys.E("/SYSTEM/SHIPMENT_MASTER/CSTM_CUSTOMER_SHIPMETHOD_IN/PLAINTEXT") = "ShipVia"
+	Sys.E("/SYSTEM/SHIPMENT_MASTER/CSTM_CUSTOMER_SHIPMETHOD_IN/ENABLED") = "0"
+	Sys.E("/SYSTEM/SHIPMENT_MASTER/CSTM_TERMS_CODE/ENABLED") = "1"
+	Sys.E("/SYSTEM/SHIPMENT_MASTER/CSTM_FREIGHT_CODE/VALIDATE") = "1"
+	Sys.E("/SYSTEM/SHIPMENT_MASTER/CSTM_CUSTOMER_SHIPMETHOD_IN/VALIDATE") = "1"
+	Sys.E("/SYSTEM/SHIPMENT_MASTER/CSTM_BOL_FREIGHT_FORWARDER_ID/VALIDATE") = "0"
+	Sys.E("/SYSTEM/SHIPMENT_MASTER/CSTM_BOL_CARRIER/VALIDATE") = "0"	
+
+	'Code calls function that tries to connect Proship customers host system.
+	Call CustomerLogon()	
+	
+End Function
+
+Function CustomerGetInternationalItems(strDeliveryID)
+	'========================================================================
+	' This function gets all international items that on contained in this shipment from
+	' customers system. This function gets called from CUSTOMERLOADSHIPMENT.PSS
+	'========================================================================
+	
+
+End Function
+
+Function PopulateProShipInternationalInformation(strDeliveryID)
+	'=======================================================================
+	' This function populates ProShip international screen with data from customer
+	'=======================================================================
+	
+	'Code sets Defaults
+	sInternationalNode = "//SHIPMENT/CMS/INTERNATIONAL"
+	sProShipNode = "//SHIPMENT/COMMON/INTERNATIONAL"
+	sSenderEIN = "84-1130457"
+	sDescription = "GREETING CARDS"
+	sSEDMethod = "0"  'No SED Required
+	sExportReason = ""
+	sAESFilingStatus = "S"	'Shipper
+	sCurrencyRate = "USD"	'US Dollars
+	sConsigneeCountry = Trim(S.E("SHIPMENT/COMMON/CONSIGNEE_COUNTRY"))
+	sFSTRExemptionNumber = ""
+	sComment1 = ""
+	
+	'Codes sets Exemption number for FedEx shipments going to Canada.
+	If UCase(Trim(S.E("SHIPMENT/COMMON/CONSIGNEE_COUNTRY"))) = "CA" Then	
+		sFSTRExemptionNumber = "FTR 30.58"
+	Else
+		sFSTRExemptionNumber = "FTR 30.55(h)"
+	End If
+	
+	'Finds out number of Detail Line Nodes and calculates Total Customs Value
+	intLineItems = S.ElementExists(sInternationalNode & "/LINE")
+	
+	'Code gets Total Item Value from each Detail node and use it to calculate total customs invoice on
+	'international summary screens.
+	For intLines = 1 To intLineItems
+		intTotalInvoiceAmount = intTotalInvoiceAmount +  CNum(S.E(sInternationalNode & "/LINE[" & intLines & "]/ITEM_TOTAL_VALUE"))
+	Next
+	
+	'Code populates International summary screen.
+	s.e("SHIPMENT/COMMON/DESCRIPTION")                  = Trim(sDescription)
+	s.e("SHIPMENT/COMMON/SENDER_EIN")                   = Trim(sSenderEIN)
+	s.e("SHIPMENT/COMMON/AES_FILING_STATUS")            = Trim(sAESFilingStatus)
+	s.e("SHIPMENT/COMMON/EXPORT_REASON")                = Trim(sExportReason)
+	s.e("SHIPMENT/COMMON/RATE_CURRENCY")                = Trim(sCurrencyRate)
+	s.e("SHIPMENT/COMMON/DECLARED_VALUE_CUSTOMS")       = intTotalInvoiceAmount
+	s.e("SHIPMENT/COMMON/ULTIMATE_DESTINATION_COUNTRY") = Trim(sConsigneeCountry)
+	s.e("SHIPMENT/COMMON/SED_METHOD") 					= Trim(sSEDMethod)
+	s.e("SHIPMENT/COMMON/FSTR_EXEMPTION_NO")            = Trim(sFSTRExemptionNumber)
+	s.e("SHIPMENT/COMMON/INTERNATIONAL/CSTM_COMMENT1")	= Trim(sComment1)
+	
+	
+	'Finds out number of Detail Line Nodes
+	intLineItems = S.ElementExists(sInternationalNode & "/LINE")
+
+	'Code reads through each CSM/DETAIL/LINE and populates International line item information
+	For intLines = 1 to intLineItems
+		s.e(sProShipNode & "/LINE[" & intLines & "]/HARMONIZED_CODE")        = Trim(S.E(sInternationalNode & "/LINE[" & intLines & "]/ITEM_COMMODITY_CODE"))
+		s.e(sProShipNode & "/LINE[" & intLines & "]/PRODUCT_CODE")			 = Trim(S.E(sInternationalNode & "/LINE[" & intLines & "]/ITEM_ITEM_NUMBER"))
+		s.e(sProShipNode & "/LINE[" & intLines & "]/CI_DESCRIPTION")         = Trim(S.E(sInternationalNode & "/LINE[" & intLines & "]/ITEM_ITEM_DESCRIPTION"))
+		s.e(sProShipNode & "/LINE[" & intLines & "]/QUANTITY")               = Trim(S.E(sInternationalNode & "/LINE[" & intLines & "]/ITEM_QTY_SHIPPED"))
+		s.e(sProShipNode & "/LINE[" & intLines & "]/COUNTRY_OF_MANUFACTURE") = Trim(S.E(sInternationalNode & "/LINE[" & intLines & "]/ITEM_COUNTRY_OF_MANUFACTURE"))
+		s.e(sProShipNode & "/LINE[" & intLines & "]/QUANTITY_UNIT_MEASURE")  = Trim(S.E(sInternationalNode & "/LINE[" & intLines & "]/ITEM_UNIT_OF_MEASURE"))
+		s.e(sProShipNode & "/LINE[" & intLines & "]/UNIT_VALUE")             = Trim(S.E(sInternationalNode & "/LINE[" & intLines & "]/ITEM_VALUE"))
+		s.e(sProShipNode & "/LINE[" & intLines & "]/PKGS_WITH_COMMODITY")    = 1
+		s.e(sProShipNode & "/LINE[" & intLines & "]/ECCN")    				 = Trim(S.E(sInternationalNode & "/LINE[" & intLines & "]/ITEM_ECCN"))
+		s.e(sProShipNode & "/LINE[" & intLines & "]/LIC_EXC_SYMBOL")    	 = Trim(S.E(sInternationalNode & "/LINE[" & intLines & "]/ITEM_LICENSE_EXCEPTION_SYMBOL"))
+	Next
+	
+End Function
+
+Function ReadDeliveryHeadTable(tblDeliveryHead)
+	'========================================================================
+	' This function reads Delivery Head table from SAP RFC call and stores information
+	' into NODE list. THis function gets called from CustomerLoadShipment
+	'========================================================================
+	
+	sNode = "/SHIPMENT/CMS/SAP_TABLES/DELIVERY_HEAD"
+	
+	i = 1
+	
+	S.E(sNode & "/DELIVERY_NUMBER")			=	tblDeliveryHead(i,"VBELN")
+	S.E(sNode & "/DELIVERY_CLOSED")			=	tblDeliveryHead(i,"PROC_FLAG")
+	S.E(sNode & "/DELIVERY_WEIGHT")			=	""
+	S.E(sNode & "/UNIT_OF_WEIGHT")			=	""
+	S.E(sNode & "/SALES_ORGANIZATION")		=	tblDeliveryHead(i,"VKORG")
+	S.E(sNode & "/SALES_ORDER")				=	tblDeliveryHead(i,"VBELN")
+	S.E(sNode & "/DELIVERY_TYPE")			=	tblDeliveryHead(i,"ORD_TYPE")
+	S.E(sNode & "/INCOTERMS1")				=	tblDeliveryHead(i,"INCO1")
+	S.E(sNode & "/INCOTERMS2")				=	tblDeliveryHead(i,"INCO2")
+	S.E(sNode & "/PAYMENT_TERMS")			=	tblDeliveryHead(i,"PAYTERM")
+	S.E(sNode & "/FREIGHT_FLAG")			=	tblDeliveryHead(i,"FRGHT_FLAG")
+	'S.E(sNode & "/PO_NUMBER")				= 	tblDeliveryHead(i,"OURPOREF")
+	S.E(sNode & "/ORDER_AMOUNT")			= 	tblDeliveryHead(i,"ORD_AMT")
+	S.E(sNode & "/CURRENCY")				= 	tblDeliveryHead(i,"CURR_KEY")
+	S.E(sNode & "/WALMART_REFERENCE")		= 	tblDeliveryHead(i,"WMART_REF")
+	S.E(sNode & "/INVOICE_CODE")			= 	tblDeliveryHead(i,"DIST_CODE")
+	S.E(sNode & "/COD_FLAG")				= 	tblDeliveryHead(i,"COD_FLAG")
+	S.E(sNode & "/PO_NUMBER")				= 	tblDeliveryHead(i,"PONBR")
+	S.E(sNode & "/DEPARTMENT")				= 	tblDeliveryHead(i,"PODEPT")
+	S.E(sNode & "/SHIP_TO")					=	""
+	S.E(sNode & "/WAREHOUSE_NUMBER")		=	""
+	S.E(sNode & "/ROUTE")					=	""
+	S.E(sNode & "/SHIPPING_POINT")			=	""
+	S.E(sNode & "/SHIPPING_CONDITION")		=	""
+	S.E(sNode & "/SOLD_TO")					=	""
+	S.E(sNode & "/TOTAL_SHIPMENT_PACKAGES")	=	""
+	
+End Function
+
+Function ReadPartnersTable(tblPartners)
+	'========================================================================
+	' This function reads through Partners table from SAP RFC call and stores all
+	' records from table into NODE list. Partners tables contains all customer addresses
+	' contained on this shipment (ShipTo, SoldTo, BillTo) THis function gets called from 
+	' CustomerLoadShipment
+	'========================================================================
+	i = 1
+	For i=1 to tblPartners.Rowcount
+	
+		sNode = "SHIPMENT/CMS/SAP_TABLES/PARTNERS[" & CNum(i) & "]"
+		
+		S.E(sNode & "/PARTNER_ROLE") 	= tblPartners(i,"PARVW")
+		S.E(sNode & "/DOCUMENT_NUMBER")	= ""
+		S.E(sNode & "/ITEM_NUMER") 		= ""
+		S.E(sNode & "/PARTNER_ID") 		= tblPartners(i,"KUNNR")
+		S.E(sNode & "/NAME1") 			= tblPartners(i,"NAME1")
+		S.E(sNode & "/NAME2") 			= tblPartners(i,"NAME2")
+		S.E(sNode & "/NAME3") 			= tblPartners(i,"NAME3")
+		S.E(sNode & "/NAME4") 			= tblPartners(i,"NAME4")
+		S.E(sNode & "/TITLE") 			= tblPartners(i,"TITLE")
+		S.E(sNode & "/STREET") 			= tblPartners(i,"STREET")
+		S.E(sNode & "/STREET_SUPPL1") 	= tblPartners(i,"STREET_SUPPL1")
+		S.E(sNode & "/STREET_SUPPL2") 	= tblPartners(i,"STREET_SUPPL2")
+		S.E(sNode & "/STREET_SUPPL3") 	= tblPartners(i,"STREET_SUPPL3")
+		S.E(sNode & "/CITY") 			= tblPartners(i,"CITY")
+		S.E(sNode & "/STATE") 			= tblPartners(i,"REGION")
+		S.E(sNode & "/ZIP") 			= tblPartners(i,"POSTAL_CODE")
+		S.E(sNode & "/COUNTRY") 		= tblPartners(i,"COUNTRY")
+		S.E(sNode & "/TELEPHONE") 		= tblPartners(i,"TELEPHONE")
+		S.E(sNode & "/STORE_NUMBER") 	= tblPartners(i,"STORE_NBR")
+		S.E(sNode & "/EDI_FLAG") 		= tblPartners(i,"EDI_FLAG")
+
+	Next
+End Function
+
+Function ReadDeliveryRacksTable(tblDeliveryRacks)
+	'========================================================================
+	' This function reads through Delivery Racks table from SAP RFC call and stores all
+	' records from table into NODE list. THis function gets called from 
+	' CustomerLoadShipment
+	'========================================================================
+
+	'Code sets variables
+	i 					= 0
+	blnRacksReadyAdded 	= False
+	iUsedRacks			= 0
+	sPartNumber			= ""
+	iRackQTY			= 0
+	iCurrentRackQTY		= 0
+	iRack				= 0
+	iRackNumber			= 0
+	
+	'Code reads through SAP Racks dataset
+	For i=1 to tblDeliveryRacks.Rowcount
+	
+		'Code checks existence of SAP rack in proship XML
+		If Shipment.ElementExists("/SHIPMENT/CMS/SAP_TABLES/DELIVERY_RACKS") > 0 Then
+
+			'Code gets total number of SAP racks already in Proship xml
+			iUsedRacks = Shipment.ElementExists("/SHIPMENT/CMS/SAP_TABLES/DELIVERY_RACKS")
+			
+			'Code sets variables from current SAP Rack dataset being read
+			sPartNumber = Trim(tblDeliveryRacks(i,"MATNR"))
+			iRackQTY = Cnum(tblDeliveryRacks(i,"QUANTITY"))
+			blnRacksReadyAdded = False
+			
+			'Code loops through current racks in proship xml
+			For iRack=1 to iUsedRacks
+			
+				'Code checks to see if current SAP rack in dataset is already in Proship xml
+				If sPartNumber = Trim(Shipment.E("/SHIPMENT/CMS/SAP_TABLES/DELIVERY_RACKS[" & iRack & "]/PART_NUMBER")) Then
+					
+					'Code sets flag that current SAP rack is already in proship XML
+					blnRacksReadyAdded = True
+					
+					'Code gets rack qty from rack in proship xml
+					iCurrentRackQTY = CNum(Shipment.E("/SHIPMENT/CMS/SAP_TABLES/DELIVERY_RACKS[" & iRack & "]/ORDER_QUANTITY"))
+					
+					'Code adds proship current rack qty to rack qty from SAP rack dataset, then updates rack qty in proship xml 
+					Shipment.E("/SHIPMENT/CMS/SAP_TABLES/DELIVERY_RACKS[" & iRack & "]/ORDER_QUANTITY") = iRackQTY + iCurrentRackQTY
+				End If
+			Next
+		Else
+			'Code sets flag that current rack from SAP rack dataset isn't already in proship XML
+			blnRacksReadyAdded = False
+		End If
+	
+		'Code checks flag then adds new SAP rack from dataset to proship xml
+		If blnRacksReadyAdded = False then
+			iRackNumber = iRackNumber + 1
+			sNode = "SHIPMENT/CMS/SAP_TABLES/DELIVERY_RACKS[" & CNum(iRackNumber) & "]"
+			
+			S.E(sNode & "/PART_NUMBER") 	= tblDeliveryRacks(i,"MATNR")
+			S.E(sNode & "/ORDER_QUANTITY")	= tblDeliveryRacks(i,"QUANTITY")
+			S.E(sNode & "/WEIGHT") 			= tblDeliveryRacks(i,"MATWGHT")
+			S.E(sNode & "/LENGTH") 			= tblDeliveryRacks(i,"MATLGTH") 
+			S.E(sNode & "/WIDTH")			= tblDeliveryRacks(i,"MATWDTH") 
+			S.E(sNode & "/HEIGHT")			= tblDeliveryRacks(i,"MATHGTH") 
+			S.E(sNode & "/UNITS_PER_BOX")	= tblDeliveryRacks(i,"MATUPB")
+		End IF
+	Next
+	
+End Function
+
+Function PopulateProShipShipmentInformation()
+	'========================================================================
+	' This function reads tables return from SAP RFC call and populates Proship
+	' shipping nodes
+	'
+	' Partner ID SP = SoldTo
+	' Partner ID SH = ShipTo
+	' Partner ID PY = Payer
+	' Partner ID BP = BillTo
+	' Partner ID ZN = Parent
+	'========================================================================
+	
+	'Code sets variables
+	sShippingCondition 	= ""
+	sShippingPoint 		= ""
+	sPartnerId 			= "SH"
+	sPartners 			= "/SHIPMENT/CMS/SAP_TABLES/PARTNERS"
+	sDelivery_Head 		= "/SHIPMENT/CMS/SAP_TABLES/DELIVERY_HEAD"
+	sRacksNode 			= "/SHIPMENT/CMS/SAP_TABLES"
+	sRacksNotFound		= ""
+	
+
+	'Code Maps customer ShipTo information to ProShip ADDED UCASE 8.7.15
+	If Trim(S.E(sDelivery_Head & "/SALES_ORGANIZATION")) = "0010" Then
+			s.e("SHIPMENT/COMMON/CONSIGNEE_COMPANY") = UCase(S.E(sPartners & "[PARTNER_ROLE='" & sPartnerID & "']/NAME1"))
+			s.e("SHIPMENT/COMMON/CONSIGNEE_CONTACT")	= UCase(S.E(sPartners & "[PARTNER_ROLE='" & sPartnerID & "']/NAME2"))
+	Else
+		'Code combines Name2 + Name 1 for Company name  &&lp 050709 ADDED UCASE 8.7.15
+		If S.E(sPartners & "[PARTNER_ROLE='" & sPartnerID & "']/NAME3") = "" Then
+						s.e("SHIPMENT/COMMON/CONSIGNEE_COMPANY") = UCase(S.E(sPartners & "[PARTNER_ROLE='" & sPartnerID & "']/NAME2")) & " " & UCase(S.E(sPartners & "[PARTNER_ROLE='" & sPartnerID & "']/NAME1")) 
+		Else
+			s.e("SHIPMENT/COMMON/CONSIGNEE_COMPANY") = UCase(S.E(sPartners & "[PARTNER_ROLE='" & sPartnerID & "']/NAME3"))
+			s.e("SHIPMENT/COMMON/CONSIGNEE_CONTACT") = UCase(S.E(sPartners & "[PARTNER_ROLE='" & sPartnerID & "']/NAME2")) & " " & UCase(S.E(sPartners & "[PARTNER_ROLE='" & sPartnerID & "']/NAME1")) 
+		End If
+	End If	
+	
+	s.e("SHIPMENT/COMMON/CONSIGNEE_ADDRESS1") 	= UCase(S.E(sPartners & "[PARTNER_ROLE='" & sPartnerID & "']/STREET"))
+	s.e("SHIPMENT/COMMON/CONSIGNEE_ADDRESS2") 	= UCase(S.E(sPartners & "[PARTNER_ROLE='" & sPartnerID & "']/STREET_SUPPL1"))
+	s.e("SHIPMENT/COMMON/CONSIGNEE_ADDRESS3") 	= UCase(S.E(sPartners & "[PARTNER_ROLE='" & sPartnerID & "']/STREET_SUPPL2"))
+	s.e("SHIPMENT/COMMON/CONSIGNEE_CITY")		= UCase(S.E(sPartners & "[PARTNER_ROLE='" & sPartnerID & "']/CITY"))
+	s.e("SHIPMENT/COMMON/CONSIGNEE_STATE") 		= UCase(S.E(sPartners & "[PARTNER_ROLE='" & sPartnerID & "']/STATE"))
+	s.e("SHIPMENT/COMMON/CONSIGNEE_POSTALCODE") = S.E(sPartners & "[PARTNER_ROLE='" & sPartnerID & "']/ZIP")
+	s.e("SHIPMENT/COMMON/CONSIGNEE_COUNTRY") 	= S.E(sPartners & "[PARTNER_ROLE='" & sPartnerID & "']/COUNTRY")
+	's.e("SHIPMENT/COMMON/CONSIGNEE_PHONE") 		= S.E(sPartners & "[PARTNER_ROLE='" & sPartnerID & "']/TELEPHONE")
+	s.e("SHIPMENT/CMS/CSTM_CUSTOMERID") 		= S.E(sPartners & "[PARTNER_ROLE='" & sPartnerID & "']/PARTNER_ID")
+	
+	'Code Maps Miscellaneous information to ProShip
+	s.e("SHIPMENT/CMS/CSTM_PO_NUMBER") 		= Trim(s.e(sDelivery_Head & "/PO_NUMBER"))
+	s.e("SHIPMENT/CMS/CSTM_DEPARTMENT") 	= Trim(s.e(sDelivery_Head & "/DEPARTMENT"))
+	s.e("SHIPMENT/CMS/CSTM_STORENUMBER") 	= S.E(sPartners & "[PARTNER_ROLE='" & sPartnerID & "']/STORE_NUMBER")
+	
+	If Trim(s.e(sDelivery_Head & "/INCOTERMS1")) <> "" Then
+		s.e("SHIPMENT/CMS/CSTM_CUSTOMER_SHIPMETHOD_IN") = Trim(s.e(sDelivery_Head & "/INCOTERMS1"))
+	Else
+		s.e("SHIPMENT/CMS/CSTM_CUSTOMER_SHIPMETHOD_IN") = "9V"
+	End If
+		
+	
+	If Trim(s.e(sDelivery_Head & "/DELIVERY_TYPE")) <> "" _ 
+		And Trim(s.e(sDelivery_Head & "/SALES_ORGANIZATION")) = "0010" _
+		And Len(Trim(s.e("SHIPMENT/COMMON/SHIPPER_REFERENCE"))) > 7 Then
+		s.e("SHIPMENT/CMS/CSTM_INTERFACE") = "SAP"
+	Else
+		 s.e("SHIPMENT/CMS/CSTM_INTERFACE") = "Empl-DeptSAP"
+	End If
+	
+	If Trim(S.E(sDelivery_Head & "/SALES_ORGANIZATION")) <> "0010" Then
+			s.e("SHIPMENT/CMS/CSTM_INTERFACE") = "SAPCONS"
+		End If	
+		
+	s.e("SHIPMENT/CMS/CSTM_FREIGHT_FLAG") = s.e(sDelivery_Head & "/FREIGHT_FLAG")
+	s.e("SHIPMENT/CMS/CSTM_COD_FLAG") = s.e(sDelivery_Head & "/COD_FLAG")
+	
+	'Code populates code amount field if cod flag is Y
+	If UCase(s.e("SHIPMENT/CMS/CSTM_COD_FLAG")) = "Y" Then
+		s.e("SHIPMENT/CMS/CSTM_COD_AMOUNT") = Trim(s.e(sDelivery_Head & "/ORDER_AMOUNT"))
+		s.e("SHIPMENT/PACKAGE[1]/COD_AMOUNT") = Trim(s.e(sDelivery_Head & "/ORDER_AMOUNT"))
+		s.e("SHIPMENT/PACKAGE[1]/COD_PAYMENT_METHOD") = "30"
+		s.e("SHIPMENT/CMS/CSTM_SOLDTO") = S.E(sPartners & "[PARTNER_ROLE='" & sPartnerID & "']/PARTNER_ID")
+		'Code populates shipment level reference 2 field for UPS PLD
+		Shipment.E("SHIPMENT/COMMON/CONSIGNEE_REFERENCE") = s.e("SHIPMENT/CMS/CSTM_SOLDTO")
+	Else
+		Shipment.E("SHIPMENT/COMMON/CONSIGNEE_REFERENCE") = s.e("SHIPMENT/CMS/CSTM_PO_NUMBER")
+	End If
+	
+	'Code plugs consignee phone number field with a phone number if we don't get
+	'number from Delivery.
+	REM If s.e("SHIPMENT/COMMON/CONSIGNEE_PHONE") = "" Then
+		REM s.e("SHIPMENT/COMMON/CONSIGNEE_PHONE") = "800-777-8716"
+	REM End If
+	
+	'Code changes shipper on screen depending upon Sales Organization from Delivery
+	If Trim(S.E(sDelivery_Head & "/SALES_ORGANIZATION")) = "0010" Then
+		s.e("SHIPMENT/COMMON/SHIPPER") = "TRADE"
+	Else
+		s.e("SHIPMENT/COMMON/SHIPPER") = "CONSUMER"
+	End If
+	
+	'Code searches for BillTo Partner information for TRADE ONLY && lp 05/28/09
+	If Trim(S.E(sDelivery_Head & "/SALES_ORGANIZATION")) = "0010" _
+		And s.e("SHIPMENT/CMS/CSTM_INTERFACE") <> "Empl-DeptSAP" Then	
+		sPartnerId = "ZN"
+		intXMLFieldFound = S.ElementExists(sPartners & "[PARTNER_ROLE='" & sPartnerID & "']/PARTNER_ID")
+		If intXMLFieldFound > 0 Then
+			s.e("SHIPMENT/CMS/CSTM_SOLDTO") 	    = S.E(sPartners & "[PARTNER_ROLE='" & sPartnerID & "']/PARTNER_ID")
+			s.e("SHIPMENT/CMS/CSTM_EDI_CUSTOMER") 	= S.E(sPartners & "[PARTNER_ROLE='" & sPartnerID & "']/EDI_FLAG")
+		Else
+			s.e("SHIPMENT/CMS/CSTM_SOLDTO") 	    = ""
+			s.e("SHIPMENT/CMS/CSTM_EDI_CUSTOMER") 	= ""
+		End If
+	End If
+	
+	'Code populates Package level miscellaneous reference fields for UPS PLD
+	If Shipment.E("/SHIPMENT/CMS/CSTM_SOLDTO") = "100302" Then
+		'Codes uses PO number and Store number as package reference fields with
+		'Family Christian Book store shipments.
+		Shipment.E("/SHIPMENT/PACKAGE[1]/MISC_REFERENCE_1") = Shipment.E("SHIPMENT/CMS/CSTM_PO_NUMBER") 
+		Shipment.E("/SHIPMENT/PACKAGE[1]/MISC_REFERENCE_2") = Shipment.E("/SHIPMENT/CMS/CSTM_STORENUMBER") 
+	Else
+		Shipment.E("/SHIPMENT/PACKAGE[1]/MISC_REFERENCE_1") = Shipment.E("/SHIPMENT/COMMON/SHIPPER_REFERENCE")
+		Shipment.E("/SHIPMENT/PACKAGE[1]/MISC_REFERENCE_2") = Shipment.E("/SHIPMENT/CMS/CSTM_PO_NUMBER") 
+	End If
+	
+	'Added 01-25-2015 - Code sets return address and department when Oracle delivery starts ca1
+	If Left(UCase(Shipment.E("/SHIPMENT/COMMON/SHIPPER_REFERENCE")),3) = "CA1" Then
+		Shipment.E("/SHIPMENT/CMS/CSTM_DEPARTMENT") = "CG"
+		Shipment.E("/SHIPMENT/COMMON/SHIPPER") 		= "CONSUMER"
+		Shipment.E("/SHIPMENT/COMMON/RETURN_ADDRESS_COMPANY") 		= "CARD GNOME"
+		Shipment.E("/SHIPMENT/COMMON/RETURN_ADDRESS_ADDRESS1") 		= "P.O. BOX 3740"
+		Shipment.E("/SHIPMENT/COMMON/RETURN_ADDRESS_CITY") 			= "BOULDER"
+		Shipment.E("/SHIPMENT/COMMON/RETURN_ADDRESS_STATE") 		= "CO"
+		Shipment.E("/SHIPMENT/COMMON/RETURN_ADDRESS_POSTALCODE")	= "80307"		
+	End If
+	
+	'Added 08-20-2015 - Code doesn't run automatic Delivery rack creation for LTL or Manual shipments
+	If Left(Shipment.E("/SHIPMENT/SERVICE"),8) <> "BWTI_LTL" _
+		And Left(Shipment.E("/SHIPMENT/SERVICE"),6) <> "MR.LTL" _ 
+		And Left(Shipment.E("/SHIPMENT/SERVICE"),7) <> "BWTI_MR" Then	
+	
+		'Added 04-29-2015 - Code finds number of Delivery racks on SAP Shipment
+		'and builds a package node for each RACK	
+		If Shipment.ElementExists(sRacksNode & "/DELIVERY_RACKS") > 0 _ 
+			And Shipment.E("/SHIPMENT/CMS/CSTM_RACKS_ONLY_SHIPMENT_FLAG") = "True" Then
+			
+			'Code calls function that validates and add SAP racks to as package nodes
+			Call BuildPackageNodesfromRacksLeaninTree(sRacksNotFound)
+			
+			'Code displays error message if any Rack not found in CSTM.BoxDimension table
+			If Trim(sRacksNotFound) <> "" Then
+				sWindowName    = "Racks missing in Box Dimension table - PopulateProShipShipmentInformation"
+				sWindowMessage = "Racks below not found in CSTM(BoxDimension) table" & Vbcrlf & Vbcrlf & _
+								 sRacksNotFound & Vbcrlf & vbCrLF & _
+								 "Add missing Racks to Box Dimension table before continuing with shipment" 
+				MsgBox sWindowMessage, vbOkOnly + vbExclamation,sWindowName
+			End If
+		End If
+	End If
+	
+	'Added 05-12-20016 - Code sets Murdoch UPS shipments to 3rd party bill MOVED from CustomerPreShipShipment to here to have it default but allowed to change
+		
+		If Shipment.E(sPartners & "[PARTNER_ROLE='" & sPartnerID & "']/PARTNER_ID") = "112643" Then
+			Shipment.E("SHIPMENT/COMMON/CONSIGNEE_ACCOUNT")	= "75F65R" 
+			Shipment.E("SHIPMENT/COMMON/TPBILL_COMPANY") 	= "MURDOCHS LLC HQ AND STORE" 
+			Shipment.E("SHIPMENT/COMMON/TPBILL_ADDRESS1") 	= "2275 N 7th AVE" 
+			Shipment.E("SHIPMENT/COMMON/TPBILL_CITY") 		= "BOZEMAN"
+			Shipment.E("SHIPMENT/COMMON/TPBILL_STATE") 		= "MT"
+			Shipment.E("SHIPMENT/COMMON/TPBILL_POSTALCODE") = "59715"  
+			Shipment.E("SHIPMENT/COMMON/TPBILL_COUNTRY") 	= "US"
+			Shipment.E("/SHIPMENT/COMMON/TERMS") 			= "THIRD_PARTY"
+			Shipment.E("/SHIPMENT/PACKAGE[1]/TERMS") 		= "THIRD_PARTY"
+			Shipment.E("SHIPMENT/SERVICE")					= "BWTI_UPS"
+	End If
+		
+	
+End Function	
+
+
+Function ReadReturnTable(tblReturn)
+	'========================================================================
+	' This function reads through Manifest_Error_Tab table from SAP RFC call and displays
+	' any returned error message to shipping operator.
+	'========================================================================
+	
+	If tblReturn("TYPE") = "E" Then
+		strWindowButtons = vbexclamation + vbOkOnly
+	ElseIf tblReturn("TYPE") = "I" Then
+		strWindowButtons = vbinformation + vbOkOnly
+	End If
+		
+
+	strErrorMessage = "Error: " & tblReturn("CODE") & vbCrLf & vbCrLf &  tblReturn("MESSAGE")
+	strWindowName = "BAPI Error Message - Sandoz.ReadReturnTable"
+	MsgBox strErrorMessage,strWindowButtons,strWindowName
+
+End Function
+
+Function PopulateBOLCommodity()
+	'========================================================================
+	' This function populates commodity used by customer on Bill of Lading screen.
+	' This function gets called from FIELDCHANGE. 
+	'========================================================================
+	
+	s.e("SHIPMENT/CMS/BOL/CSTM_COMMODITY_DESCRIPTION") = ""
+	
+End Function
+
+Function ReadTextCommentsTable(tblTextComments)
+	'========================================================================
+	' This function reads through Text Comments table from SAP RFC call and stores all
+	' records from table into NODE list. This function gets called from 
+	' CustomerLoadShipment
+	'========================================================================
+
+	i = 1
+	For i=1 to tblTextComments.Rowcount
+	
+		sNode = "SHIPMENT/CMS/SAP_TABLES/TEXT_COMMENTS[" & CNum(i) & "]"
+		
+		S.E(sNode & "/TEXT_SEQUENCE_NUMBER") 	= tblTextComments(i,"TXT_SEQ")
+		S.E(sNode & "/TEXT_MESSAGE")			= tblTextComments(i,"TXT_LINE")
+		
+		strWindowMessage = strWindowMessage + Trim(tblTextComments(i,"TXT_LINE")) & vbCrlf
+
+	Next
+	
+	'Code onlys displays comments if found.
+	If strWindowmessage <> "" Then
+		strWindowName = "Shipping Comments - Leanin.ReadTextCommentsTable"
+		strWindowButtons = vbInformation + vbOkOnly
+		MsgBox strWindowMessage,strWindowButtons,strWindowName	
+	End If
+
+End Function
+
+Function CustomerPostShipShipmentMultipleBoxEndicia(OkToContinue)
+	'========================================================================
+	' This functions creates output for customers ERP system on multiple
+	' package Endicia shipments.
+	'========================================================================
+	
+	'Code sets variables
+	sQuery 					= ""
+	iTotalPackageCount 		= 0
+	iTotalShipmentCost  	= 0
+	iTotalShipmentSpecial	= 0
+	iTotalShipmentBase		= 0
+	iCurrentPackage			= 1
+	iPackage				= 1
+	sManifestDate			= Shipment.E("/SHIPMENT/COMMON/SHIPDATE")
+	strManifestDate  		= Celse(Shipment.E("SHIPMENT/COMMON/SHIPDATE"),"yyyymmdd")
+	strTodaydate 			= Celse (now, "yyyymmdd")
+	strDeliveryID			= Shipment.E("/SHIPMENT/COMMON/SHIPPER_REFERENCE")
+	strCurrentTime 			= ""
+	strRFCAction 			= "I"
+	ProShipCarrier 			= Shipment.E("/SHIPMENT/SERVICE")
+	
+	'Code exits function on MANUAL shipments
+	If UCase(s.e("SHIPMENT/CMS/CSTM_INTERFACE")) = "MANUAL" _
+		Or UCase(s.e("SHIPMENT/CMS/CSTM_INTERFACE")) <> "MAILROOM" Then
+		Exit Function
+	End If
+	
+	'Code call function creates RACK nodes from PACKAGE nodes if CSTM_BOXTYPE is not empty
+	Call CreateRackNodes()
+
+	'Code calls function that formats PC time into HHMMSS
+	Call FormatShippedTimeHHMMSS(strCurrentTime)
+	
+	'07-31-2009 - Code calls function to parse out carrier and service from Proship service field.
+	Call ParseCarrierAndService (ProShipCarrier, CarrierName, CarrierService)
+	
+	'07-31-2009 - Code converts carriername to FXRS if Fedex Ground Shipment
+	If CarrierName = "CAFE" Then
+		CarrierName = "FXRS"
+	ElseIf CarrierName = "ELS" Then
+		CarrierName = "USPS"
+	End If	
+	
+	'Code converts manifest date from (MM-DD-YYYY) to (YYYY-MM-DD) 
+	sManifestDate = DatePart("yyyy",sManifestDate) & "-" _
+        & Right("0" & DatePart("m",sManifestDate), 2) & "-" _
+        & Right("0" & DatePart("d",sManifestDate), 2) 		  
+	
+	sQuery = "Select PackageID, CustomerShipmethodOut, BaseCharge, " & _
+			 "TotalCharge, BilledWeight, ActualWeight,TrackingNumber, " & _
+			 "PSVoidId, UserText2, UserText3 " & _
+			 "From cstm.history " & _ 
+			 "Where packageid = '" & strDeliveryID & "' " & _  
+			 "And voidflag <> 'Y' " & _ 
+			 "And left(shipdate,10) = '" & sManifestDate & "'"
+			 
+	On Error Resume Next
+	Set rsHistory = pCN.Execute(sQuery)
+	
+	'Code displays error message to operator if problem reading cstm(history) table.
+	If Err.Number <> 0 _
+		Or Err.Description <> "" Then
+		strWindowMessage = "Received Error Reading Shipment  " & UCASE(strDeliveryID) & " from CSTM(History) Table" & vbCrLf & vbCrlf & _
+						   Err.Number & " - " & Err.Description & vbCrlf & vbCrlf & _
+						   "Please Report Problem to IT Department"
+		strWindowTitle   = "Error Reading Histor - CustomerPostShipShipmentMultipleBoxEndicia"
+		MsgBox strWindowMessage,vbCritical + vbOkOnly,strWindowTitle
+		
+		'Code calls function that logs information in Databse CSTM table Transactionlog
+		strText = Err.Number & " - " & Err.Description 
+		strPackageID  = strDeliveryID
+		strFunctionname = "CustomerPostShipShipmentMultipleBoxEndicia"
+		strMessage = "Error Reading History"
+		strMessage = Replace(strMessage, "\", "\\")
+		Call AddLogTransaction(strText, strFunctionName, strMessage, strPackageID)
+		
+		'Code clears error and allows proship to continue
+		Err.Clear
+		
+		'Code exits Function
+		Exit Function
+	End If
+	
+	'Code sets pointer to first record in recordset
+	rsHistory.MoveFirst	
+	
+	'Code reads through recordset to get shipment totals
+	Do While Not rsHistory.EOF
+		iTotalPackageCount 		= iTotalPackageCount + 1
+		iTotalShipmentCost 		= iTotalShipmentCost + Cnum(rsHistory.Fields("BaseCharge").value)
+		iTotalShipmentSpecial	= iTotalShipmentSpecial + Cnum(rsHistory.Fields("Special").value)
+		iTotalShipmentBase 		= iTotalShipmentBase + Cnum(rsHistory.Fields("TotalCharge").value)
+		
+		'Code moves to next record in RecordSet
+		rsHistory.MoveNext
+	loop
+	
+	'Code sets pointer to first record in recordset
+	rsHistory.MoveFirst
+	
+	'Code builds Objects for RFC call
+	FuncControl.Connection = oSAPConnection	
+	Set WriteSAPData = FuncControl.Add("ZLSL_SEND_DELIVERY_DATA")
+	Set strDelivery			= WriteSAPData.Exports("DELIVERY") 
+	Set strSalesOrg			= WriteSAPData.Exports("SALES_ORG") 
+	Set strAction			= WriteSAPData.Exports("ACTION") 
+	Set strInvoiceInBox		= WriteSAPData.Exports("INVOICE_IN_BOX")
+	Set strFutureShipDate	= WriteSAPData.Exports("FUTURE_SHIP_DATE") 		
+	Set tblManifest			= WriteSAPData.Tables("MANIFEST_TAB")
+	Set tblReturnError	 	= WriteSAPData.Tables("MANIFEST_ERROR_TAB")	
+	
+	'Code sets field values that are passed to SAP that aren't part of a table
+	strDelivery.Value = Trim(rsHistory.Fields("PackageID").value)
+	strSalesOrg.Value = Trim(rsHistory.Fields("UserText3").value)
+	strAction.Value = strRFCAction
+	strInvoiceInBox.Value = Trim(rsHistory.Fields("UserText2").value)
+
+	'08-19-2009 - Code checks to see if shipment is a future shipment
+	If strManifestDate = strTodayDate Then
+		strFutureShipDate.Value = 0
+	Else
+		strFutureShipDate.Value = strManifestDate
+	End If
+
+	'Code reads through each package in history for current multiple box endicia
+	'shipment and creates a record in table that gets sent back to customers 
+	'host system.
+	Do While Not rsHistory.EOF
+	
+		tblManifest.Rows.Add
+		tblManifest.Value(iPackage,"MNORD") = Trim(s.e("SHIPMENT/COMMON/SHIPPER_REFERENCE"))
+		
+		'Code decides system code depending upon Sales Organization
+		If Trim(s.e("SHIPMENT/CMS/SAP_TABLES/DELIVERY_HEAD/SALES_ORGANIZATION")) = "0010" Then
+			tblManifest.Value(iPackage,"MNSYCD") = "1"
+		Else
+			tblManifest.Value(iPackage,"MNSYCD") = "2"
+		End If
+		
+		tblManifest.Value(iPackage,"MNUNID") 	= Trim(rsHistory.Fields("PSVoidID").value) & iPackage
+		tblManifest.Value(iPackage,"MNDTE") 	= CElse(s.e("SHIPMENT/COMMON/SHIPDATE"),"yyyymmdd")
+		tblManifest.Value(iPackage,"MNTIME") 	= strCurrentTime
+		tblManifest.Value(iPackage,"MNSYS") 	= Trim(s.e("SHIPMENT/CMS/CSTM_SHIPPERID"))
+		tblManifest.Value(iPackage,"MNTRAN")	= " "
+		tblManifest.Value(iPackage,"MNSEQ") 	= iPackage	
+		tblManifest.Value(iPackage,"MNMODE") 	= Trim(s.e("SHIPMENT/CMS/CSTM_CUSTOMER_SHIPMETHOD_OUT"))
+		tblManifest.Value(iPackage,"MNPKG") 	= iTotalPackageCount
+		tblManifest.Value(iPackage,"MNLTL") 	= Space(02)
+		tblManifest.Value(iPackage,"MNZIP") 	= Left(Trim(s.e("SHIPMENT/COMMON/CONSIGNEE_POSTALCODE")),5)
+		tblManifest.Value(iPackage,"MNWGT") 	= Trim(rsHistory.Fields("ActualWeight").value)	
+		tblManifest.Value(iPackage,"MNZONE") 	= Trim(s.e("SHIPMENT/COMMON/ZONE"))	
+		tblManifest.Value(iPackage,"MNCAR") 	= Space(24)
+		tblManifest.Value(iPackage,"MNTRCK") 	= Trim(rsHistory.Fields("TrackingNumber").value)	
+		tblManifest.Value(iPackage,"MNBASE") 	= iTotalShipmentCost	
+		tblManifest.Value(iPackage,"MNUCC") 	= Trim(s.e("SHIPMENT/PACKAGE[" & iPackage & "]/CSTM_UCC_NUMBER"))
+
+		'Code checks for COD amount in Shipment
+		If CNum(s.e("SHIPMENT/CMS/CSTM_COD_AMOUNT")) > 0 Then
+			tblManifest.Value(iPackage,"MNCODV") = CNum(s.e("SHIPMENT/COMMON/COD_FEE"))		
+			tblManifest.Value(iPackage,"MNCOD") = CNum(s.e("SHIPMENT/CMS/CSTM_COD_AMOUNT"))	
+		Else
+			tblManifest.Value(iPackage,"MNCODV") = 0.00	
+			tblManifest.Value(iPackage,"MNCOD")  = 0.00
+		End If	
+
+		tblManifest.Value(iPackage,"MNCODC") 	= 0.00
+		tblManifest.Value(iPackage,"MNDVC") 	= 0.00
+		tblManifest.Value(iPackage,"MNDVIA")	= 0.00
+		tblManifest.Value(iPackage,"MNAIA") 	= 0.00
+		tblManifest.Value(iPackage,"MNAIC") 	= 0.00
+		tblManifest.Value(iPackage,"MNAODC") 	= 0.00
+		tblManifest.Value(iPackage,"MNCTC") 	= 0.00
+		tblManifest.Value(iPackage,"MNHFEE") 	= 0.00
+		tblManifest.Value(iPackage,"MNAFEE") 	= 0.00
+
+		''tblManifest.Value(iPackage,"MNNET") = CNum(s.e("SHIPMENT/COMMON/TOTAL")) - CNum(s.e("SHIPMENT/COMMON/DISCOUNT"))
+		'tblManifest.Value(iPackage,"MNTCHG") = CNum(s.e("SHIPMENT/COMMON/TOTAL")) - CNum(s.e("SHIPMENT/COMMON/DISCOUNT"))
+		
+		'Code removes discount from total price for Fedex express and ground shipments. That total amount being
+		'passed back to customer will be Base + Special &&lp changed 060209
+		If Left(Trim(s.e("SHIPMENT/SERVICE")),14) = "BWTI_FXRS.FXRS" _
+			Or Left(Trim(s.e("SHIPMENT/SERVICE")),14) = "BWTI_FXRS.CAFE" Then
+			tblManifest.Value(iPackage,"MNNET")  = CNum(iTotalShipmentCost) + CNum(iTotalShipmentSpecial) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+			tblManifest.Value(iPackage,"MNTCHG") = CNum(iTotalShipmentCost) + CNum(iTotalShipmentSpecial) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+		Else
+			tblManifest.Value(iPackage,"MNNET")  = CNum(iTotalShipmentBase) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+			tblManifest.Value(iPackage,"MNTCHG") = CNum(iTotalShipmentBase) - CNum(s.e("SHIPMENT/COMMON/COD_FEE"))	
+		End If		
+	
+		tblManifest.Value(iPackage,"MNTXT1") = Space(10)
+		tblManifest.Value(iPackage,"MNTXT2") = Space(10)
+		tblManifest.Value(iPackage,"MNTXT3") = Space(20)
+		tblManifest.Value(iPackage,"MNCMNT") = "0"
+		tblManifest.Value(iPackage,"MNPOST") = " "
+		
+		'07-31-2009 -Added to fields that get past back to customer
+		tblManifest.Value(iPackage,"MNCARRIER") = Left(Trim(CarrierName),4)
+		tblManifest.Value(iPackage,"MNSERVICE") = Left(Trim(CarrierService),6)	
+	
+		'Code adds 1 to current record counter
+		iPackage = iPackage + 1
+		
+		'Code sets pointer to first record in recordset
+		rsHistory.MoveNext
+	Loop
+	
+	'Code sends Void information to RFC call. Then looks to see if RFC call returns error. Code displays any error messages
+	'return from RFC call.
+	If WriteSAPData.Call = True Then
+		If tblReturnError.RowCount > 0 Then
+			strErrorMessage = "Delivery " & UCASE(strDeliveryID) & " received error message below when updating SAP" & vbCrLF & vbCrLF & _
+							  tblReturnError(1,"ERROR_CODE") & " | " & tblReturnError(1,"ERROR_DESC") & vbCrLf & vbCrLf & _
+							  "Please VOID shipment and re-ship. If problem persists," & vbCrLf & _
+							  "report problem to your support department"
+			strWindowName = "Updating SAP - Leanin.CustomerPostShipShipment"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName
+		End If
+	Else
+		strErrorMessage = "Received error from SAP Function ZLSL_SEND_DELIVERY_DATA" & vbCrLF & _
+			  "Please VOID shipment and re-ship. If problem persists," & vbCrLf & _
+			  "report problem to your support department"
+		strWindowName = "Updating SAP - Leanin.CustomerPostShipShipment"
+		strWindowButtons = vbCritical + vbOkOnly
+		MsgBox strErrorMessage,strWindowButtons,strWindowName
+	End If
+		   
+	'Code empties objects
+	Set strDelivery			= Nothing 
+	Set strSalesOrg 		= Nothing 
+	Set strAction 			= Nothing
+	Set strInvoiceInBox		= Nothing
+	Set strFutureShipDate	= Nothing 		
+	Set tblManifest			= Nothing 
+	Set tblReturnError 		= Nothing
+	
+	'Code empties RecordSet
+	Set rsHistory			= Nothing
+	
+End Function
+	
+Function MailroomImportFile()
+	'========================================================================
+	' This function reads in a CSV that contains daily mail room shipments
+	' creates into CSTM(feeder_addresses) table. This table is used for 
+	' processing shipments from mail room. This function gets called 
+	' from USER.PSS and is found under USER menu.
+	'========================================================================
+	
+	'Set variables
+	sFileName				= ""
+	sCurrentRecord			= ""
+	blnOkToContinue			= True
+	iRecordCount			= 0
+	'Shipment.E("/SHIPMENT/CMS/CSTM_BATCH_NAME") = ""
+
+	'Code calls function to find daily mail room file to import 
+	Call MailroomFindFile(sFileName, blnOkToContinue)
+	
+	'Code exits batch import if not file was found
+	If blnOkToContinue = False Then
+		Exit Function
+	End If
+	
+	'Code reads through Mailroom file
+	If blnOkToContinue = True Then
+	
+		'Code deletes all records from cstm.feeder_addresses table
+		Call MailroomDeleteFeederAddressTable(blnOkToContinue)
+
+		'Code finds out number of shipments in Mailroom file
+		Call MailroomFileRecordCount(sFileName, iRecordCount)
+		
+		'Code sets up progress bar that gives operator feed back on import process	
+		iCurrent = 0
+		iCount   = iRecordCount
+		ProgressBar True,iCurrent,0,iCount,"Batch File Import","Importing Batch Records...", True
+			
+		'Set object variables
+		Set fso = CreateObject("Scripting.FileSystemObject")
+		
+		'Code open input Batch File 
+		Set TS = FSO.OpenTextFile(sFileName,1)
+		
+		'Code reads first line of file which contains header information
+		sCurrentRecord = TS.ReadLine
+		
+		'Code reads through Batch file until all records have been read.
+		Do While Not TS.AtEndOfStream
+			sCurrentRecord = TS.ReadLine
+			
+			Fieldz = Split(sCurrentRecord,",")
+			strDeliveryID = Fieldz(1)
+				
+			'Code only reads text line if it contains data in first field
+			If strDeliveryID <> "" Then	
+				
+				'Code updates current progress bar
+				sMessage = "(Importing Shipment " & iCurrent & "  Of  " & iCount & ")" 
+				Cancelme = CancelMe + ProgressBar(True,iCurrent ,,,, sMessage)
+
+				'Code closes progress bar and exit function if operator clicks cancel button 
+				If CancelMe <> 0 Then 
+					ProgressBar False, 0
+					Exit Function
+				End If
+				
+				'Code calls function that inserts batch records into feeder_address table
+				Call MailroomInsertFeederAddressTable(sCurrentRecord, blnOkToContinue, iCurrent)
+
+				'Code updates good record import counter
+				If blnOkToContinue = True Then	
+					iCurrent = iCurrent + 1
+				End If
+			End If
+		Loop
+		
+		'Code closes progress bar on screen
+		ProgressBar False, 0
+
+		'Code displays message that Eclipse import has completed.	
+		sWindowMessage = "Mailroom File Import into ProShip has Completed. Click OK Button to Continue"  & vbCrlf & vbCrlf &_
+						   "Mailroom File :  " & sFileName & vbcrlf & _
+						   "File Contained:  " & iCurrent & "  Shipments"
+		sWindowName = "Leanin.MailroomImportFile"
+		sWindowButtons = vbExclamation & vbOKOnly
+		MsgBox sWindowMessage,sWindowButtons,sWindowName			
+		
+	End If
+End Function
+
+Function MailroomFindFile(sFileName, blnOkToContinue)
+	'========================================================================
+	' This function pops screen to operator so they can pick mail room file 
+	' that needs to be imported.
+	'========================================================================
+	
+	'Set object variables
+	Set fso = CreateObject("Scripting.FileSystemObject")
+	
+	'Code displays open file dialogue box so operator can find where mail room file is located
+	sFileName = ShowFileOpenDialog ("C:\", "Daily Mailroom File to Import", "CSV files (*.csv)")
+	
+	'Code checks for input file for mailroom. Not found display error message.
+	If fso.FileExists(sFileName) Then
+		'Code sets flag to continue
+		blnOkToContinue = True
+	Else
+		'Displays error message if operator didn't find or pick a file to import
+		sWindowMessage = "Mailroom File Import Cancelled by Operator"
+		sWindowName = "Leanin.MailroomFindFile"
+		sWindowButtons = vbInformation + vbOkOnly
+		MsgBox sWindowMessage,sWindowButtons,sWindowName	
+		
+		'Code sets flag to not continue
+		blnOkToContinue = False
+	End If
+End Function
+
+Function MailroomFileRecordCount(sFileName, iRecordCount)
+	'========================================================================
+	' This function reads in a CSV that contains daily mail room file to find
+	' out total number of records in file. 
+	'========================================================================
+	
+	'Set object variables
+	Set fso = CreateObject("Scripting.FileSystemObject")
+	
+	'Code open input Batch File 
+	Set TS = FSO.OpenTextFile(sFileName,1)
+
+	'Code reads through Mail room file until all records have been read.
+	Do While Not TS.AtEndOfStream
+		sLine = TS.ReadLine
+		
+		Fieldz = Split(sLine,",")
+		strDeliveryID = Fieldz(1)
+			
+		'Code only reads text line if it contains data in first field
+		If strDeliveryID <> "" Then	
+
+			'Code adds 1 to record count
+			iRecordCount = iRecordCount + 1
+		End If
+	Loop
+End Function
+
+Function MailroomInsertFeederAddressTable(sCurrentRecord, blnOkToContinue, iCurrent)
+	'========================================================================
+	' This function reads in a inserts records into CSTM.Feeder_addresses 
+	' table for mail room shipments.
+	'========================================================================
+	
+	'Set variables
+	sQuery		= ""
+	
+	'Code splits current record in txt file into separate fields.
+	Fieldz = Split(sCurrentRecord,",")
+	
+	'Code sets variables for insert statement
+	sPackageID 				= CTrim(FixStringField(Fieldz(0)),45)
+	sCustomerContact 		= CTrim(FixStringField(Fieldz(0)),35)
+	sCustomerName 			= CTrim(FixStringField(Fieldz(1)),35)
+	sCustomerAddress1 		= CTrim(FixStringField(Fieldz(2)),35)
+	sCustomerAddress2		= CTrim(FixStringField(Fieldz(3)),35)
+	sCustomerCity 			= CTrim(FixStringField(Fieldz(4)),35)
+	sCustomerStateZip		= CTrim(FixStringField(Fieldz(5)),35)
+	sMiscText1				= ""
+	sCustomerCountry 		= "US"
+	
+	'Code uses 3 right characters as package id.
+	sPackageID = Right(sPackageID,3)
+	
+	'Code uses left 2 characters as state
+	sCustomerState = Left(Trim(sCustomerStateZip),2)
+	
+	'Code looks for - character in zip code
+	If Instr(1,sCustomerStateZip,"-") > 0 Then
+		sCustomerZip = Right(sCustomerStateZip,10)
+	Else
+		sCustomerZip = Right(sCustomerStateZip,5)
+	End If
+	
+	'Codes builds insert statement if OkToContinue flag is TRUE
+	If blnOkToContinue = True Then
+		sQuery = "Insert into feeder_addresses set "
+		sQuery = sQuery & "order_number = '" & sPackageID & "', "	
+		sQuery = sQuery & "company = '" & sCustomerName & "',"
+		sQuery = sQuery & "attention = '" & sCustomerContact & "',"
+		sQuery = sQuery & "address1 = '" & sCustomerAddress1 & "'," 
+		sQuery = sQuery & "address2	= '" & sCustomerAddress2 & "'," 
+		sQuery = sQuery & "City = '" & sCustomerCity & "',"
+		sQuery = sQuery & "State = '" & sCustomerState & "',"
+		sQuery = sQuery & "Zip = '" & sCustomerZip & "'," 
+		sQuery = sQuery & "country = '" & sCustomerCountry & "'," 
+		sQuery = sQuery & "Misc_Reference_1 = '" & sMiscText1 & "' "
+
+		On Error Resume Next
+		Set rsFeederAddressInput = pCN.Execute(sQuery)
+		
+		'Code displays error message to operator if problem inserting into cstm(feeder_addresses) table.
+		If Err.Number <> 0 _
+			Or Err.Description <> "" Then
+			
+			'Code calls function that logs information in Database CSTM table Transaction-log
+			strText = Err.Number & " - " & Err.Description 
+			strPackageID  = sPackageID
+			strFunctionname = "MailroomInsertFeederAddressTable"
+			strMessage = "Error Inserting shipment record " & sPackageID & " into feeder_addresses Table"
+			strMessage = Replace(strMessage, "\", "\\")
+			Call AddLogTransaction(strText, strFunctionName, strMessage, strPackageID)
+			
+			'Code clears error and allows proship to continue
+			Err.Clear
+		End If
+	End If
+End Function
+
+Function MailroomDeleteFeederAddressTable(blnOkToContinue)
+	'========================================================================
+	' This function deletes records from CSTM.Feeder_addresses table.
+	'========================================================================
+	
+	'Set variables
+	sQuery		= ""
+	
+	
+	'Codes builds insert statement if OkToContinue flag is TRUE
+	If blnOkToContinue = True Then
+		sQuery = "Delete from feeder_addresses"
+
+		On Error Resume Next
+		Set rsFeederAddressInput = pCN.Execute(sQuery)
+		
+		'Code displays error message to operator if problem deleting from cstm(feeder_addresses) table.
+		If Err.Number <> 0 _
+			Or Err.Description <> "" Then
+			
+			'Code calls function that logs information in Database CSTM table Transactionlog
+			strText = Err.Number & " - " & Err.Description 
+			strPackageID  = sPackageID
+			strFunctionname = "MailroomDeleteFeederAddressTable"
+			strMessage = "Error Deleting feeder_addresses Table"
+			strMessage = Replace(strMessage, "\", "\\")
+			Call AddLogTransaction(strText, strFunctionName, strMessage, strPackageID)
+			
+			'Code clears error and allows proship to continue
+			Err.Clear
+		End If
+	End If
+End Function
+
+Function MailroomReadFeederAddressTable(strDeliveryID, OkToContinue)
+	'========================================================================
+	' This function reads shipment from CSTM.Feeder_addresses table.
+	'========================================================================
+	
+	'Set variables
+	sQuery = ""
+
+	'Code builds query to read CSTM.batchinput table
+	sQuery = "SELECT order_number, company, attention, address1, address2, " & _
+			 "address3, city, state, zip, country, Misc_reference_1 " & _
+			 "FROM feeder_Addresses " & _
+			 "WHERE order_number = '" & Trim(strDeliveryID) & "' " 
+			 
+	'Code sends query to connection
+	SET rsFeederAddress = pCN.Execute(sQuery)
+	
+	If rsFeederAddress.eof Then
+		'Code displays error message if shipment not found in CSTM(feeder_addresses) table
+		strErrorMessage = "Shipment Number  " &  UCase(Trim(strDeliveryID)) & "  not found in CSTM(feeder_addresses) table" & Vbcrlf & _
+						  "Please verify shipment from mailroom"
+						  
+		strWindowName = "No Record Found - Leanin.MailroomReadFeederAddressTable"
+		MsgBox strErrorMessage,vbInformation + vbOkOnly, strWindowName
+		
+		'Set flag not to continue
+		OkToContinue = False
+	Else
+		'Code populates ProShip fields
+		s.e("SHIPMENT/COMMON/CONSIGNEE_COMPANY") 	= UCase(Trim(rsFeederAddress.Fields("company").value & "" ))
+		s.e("SHIPMENT/COMMON/CONSIGNEE_CONTACT") 	= UCase(Trim(rsFeederAddress.Fields("attention").value & "" ))
+		s.e("SHIPMENT/COMMON/CONSIGNEE_ADDRESS1")	= UCase(Trim(rsFeederAddress.Fields("Address1").value & ""))
+		s.e("SHIPMENT/COMMON/CONSIGNEE_ADDRESS2") 	= UCase(Trim(rsFeederAddress.Fields("Address2").value & ""))
+		s.e("SHIPMENT/COMMON/CONSIGNEE_ADDRESS3") 	= UCase(Trim(rsFeederAddress.Fields("Address3").value & ""))
+		s.e("SHIPMENT/COMMON/CONSIGNEE_CITY") 		= UCase(Trim(rsFeederAddress.Fields("City").value & ""))
+		s.e("SHIPMENT/COMMON/CONSIGNEE_STATE") 		= UCase(Trim(rsFeederAddress.Fields("State").value & ""))
+		s.e("SHIPMENT/COMMON/CONSIGNEE_POSTALCODE") = Trim(rsFeederAddress.Fields("Zip").value & "")
+		s.e("SHIPMENT/COMMON/CONSIGNEE_COUNTRY") 	= rsFeederAddress.Fields("country").value & ""
+		s.e("SHIPMENT/CMS/CSTM_REFERENCE_1")		= rsFeederAddress.Fields("MISC_REFERENCE_1").value & ""
+		s.e("SHIPMENT/CMS/CSTM_INTERFACE") 			= "MAILROOM"
+		
+		'Code populates reference fields
+		Shipment.E("/SHIPMENT/PACKAGE/MISC_REFERENCE_1") = "MM"
+		Shipment.E("/SHIPMENT/PACKAGE/MISC_REFERENCE_2") = Shipment.E("/SHIPMENT/COMMON/SHIPPER_REFERENCE")
+		
+		'Set flag to continue
+		OkToContinue = True	
+	End If
+End Function

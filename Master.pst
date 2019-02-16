@@ -1,0 +1,287 @@
+Imports System.IO
+
+'Sets connection string to CSTM database
+Const MySQLConnectionString As String = "Driver={MySQL ODBC 3.51 Driver};Server=v-proship1;Database=cstm;User=proship;Password=proship"
+
+Public Function CleanUpdateFiles()
+'=========================================================================
+' This function deletes all *.PUV files found in /Proship/server directory and all 
+' sub-directories.
+'=========================================================================
+Dim keyToFile As New System.Collections.Generic.Dictionary(Of String, System.IO.FileInfo)
+
+For Each fileName As String In System.IO.Directory.GetFiles("c:\\program files\\proship\\server", "*.puv", System.IO.SearchOption.AllDirectories)
+	'Create a FileInfo object for the given file name
+	Dim fi As System.IO.FileInfo = new System.IO.FileInfo(fileName)
+	Dim nameParts As String() = fi.Name.Split(New [Char]() { "."c } )
+
+	If nameParts.Length > 2 Then
+		'Join the first 2 parts of the name to use as the unique key in the dictionary
+		'Have to split second part on underscores
+		Dim extParts As String() = nameParts(1).Split(New [Char]() { "_"c } )
+		Dim uKey As String = nameParts(0) + "." + extParts(0)
+
+		'Check if the unique key exists in the dictionary
+		If keyToFile.ContainsKey(uKey) Then
+			'If the key exists, check if the existing files' creation date is greater than the
+			'new files' date
+			If keyToFile(uKey).CreationTime > fi.CreationTime Then
+				'If existing file is newer than test file, delete test file
+				LogDebug("Deleting file " + fi.FullName)
+				fi.Delete()
+			Else
+				'Else, delete existing file and replace the reference in the dictionary
+				'with the newer file
+				LogDebug("Deleting file " + keyToFile(uKey).FullName)
+				keyToFile(uKey).Delete()
+				keyToFile(uKey) = fi
+			End If
+		Else
+		'Else, add the current file to the dictionary
+		keyToFile.Add(uKey, fi)
+		End If
+	End If
+Next fileName
+
+For Each fileName As String In System.IO.Directory.GetFiles("c:\\program files\\proship\\client\\CACHE\\DEFAULT", "*.puv", System.IO.SearchOption.AllDirectories)
+'Create a FileInfo object for the given file name
+Dim fi As System.IO.FileInfo = new System.IO.FileInfo(fileName)
+
+Dim nameParts As String() = fi.Name.Split(New [Char]() { "."c } )
+
+If nameParts.Length > 2 Then
+
+'Join the first 2 parts of the name to use as the unique key in the dictionary
+'Have to split second part on underscores
+Dim extParts As String() = nameParts(1).Split(New [Char]() { "_"c } )
+Dim uKey As String = nameParts(0) + "." + extParts(0)
+
+'Check if the unique key exists in the dictionary
+If keyToFile.ContainsKey(uKey) Then
+'If the key exists, check if the existing files' creation date is greater than the
+'new files' date
+If keyToFile(uKey).CreationTime > fi.CreationTime Then
+'If existing file is newer than test file, delete test file
+LogDebug("Deleting file " + fi.FullName)
+fi.Delete()
+Else
+'Else, delete existing file and replace the reference in the dictionary
+'with the newer file
+LogDebug("Deleting file " + keyToFile(uKey).FullName)
+keyToFile(uKey).Delete()
+keyToFile(uKey) = fi
+End If
+Else
+'Else, add the current file to the dictionary
+keyToFile.Add(uKey, fi)
+End If
+
+End If
+
+Next fileName
+
+For Each fileName As String In System.IO.Directory.GetFiles("c:\\program files\\proship\\client\\CACHE", "*.puv", System.IO.SearchOption.AllDirectories)
+'Create a FileInfo object for the given file name
+Dim fi As System.IO.FileInfo = new System.IO.FileInfo(fileName)
+
+Dim nameParts As String() = fi.Name.Split(New [Char]() { "."c } )
+
+If nameParts.Length > 2 Then
+
+'Join the first 2 parts of the name to use as the unique key in the dictionary
+'Have to split second part on underscores
+Dim extParts As String() = nameParts(1).Split(New [Char]() { "_"c } )
+Dim uKey As String = nameParts(0) + "." + extParts(0)
+
+'Check if the unique key exists in the dictionary
+If keyToFile.ContainsKey(uKey) Then
+'If the key exists, check if the existing files' creation date is greater than the
+'new files' date
+If keyToFile(uKey).CreationTime > fi.CreationTime Then
+'If existing file is newer than test file, delete test file
+LogDebug("Deleting file " + fi.FullName)
+fi.Delete()
+Else
+'Else, delete existing file and replace the reference in the dictionary
+'with the newer file
+LogDebug("Deleting file " + keyToFile(uKey).FullName)
+keyToFile(uKey).Delete()
+keyToFile(uKey) = fi
+End If
+Else
+'Else, add the current file to the dictionary
+keyToFile.Add(uKey, fi)
+End If
+
+End If
+
+Next fileName
+
+For Each fileName As String In System.IO.Directory.GetFiles("c:\\program files\\proship\\client", "*.puv", System.IO.SearchOption.AllDirectories)
+'Create a FileInfo object for the given file name
+Dim fi As System.IO.FileInfo = new System.IO.FileInfo(fileName)
+
+Dim nameParts As String() = fi.Name.Split(New [Char]() { "."c } )
+
+If nameParts.Length > 2 Then
+
+'Join the first 2 parts of the name to use as the unique key in the dictionary
+'Have to split second part on underscores
+Dim extParts As String() = nameParts(1).Split(New [Char]() { "_"c } )
+Dim uKey As String = nameParts(0) + "." + extParts(0)
+
+'Check if the unique key exists in the dictionary
+If keyToFile.ContainsKey(uKey) Then
+'If the key exists, check if the existing files' creation date is greater than the
+'new files' date
+If keyToFile(uKey).CreationTime > fi.CreationTime Then
+'If existing file is newer than test file, delete test file
+LogDebug("Deleting file " + fi.FullName)
+fi.Delete()
+Else
+'Else, delete existing file and replace the reference in the dictionary
+'with the newer file
+LogDebug("Deleting file " + keyToFile(uKey).FullName)
+keyToFile(uKey).Delete()
+keyToFile(uKey) = fi
+End If
+Else
+'Else, add the current file to the dictionary
+keyToFile.Add(uKey, fi)
+End If
+
+End If
+
+Next fileName
+
+End Function
+'*********************************************************************************************
+Public Function TruncateLogFiles()
+'=========================================================================
+' This function truncates all proship log files to 1MB in size
+'=========================================================================
+Dim fileContents As System.IO.StreamReader
+Dim newFileContents As New System.Collections.Generic.Queue(Of String)
+Dim line As String
+Dim removedLine As String
+Dim fileContentSize As Integer = 0
+
+'For every *.log file in the ProShip server directory
+For Each fileName As String In System.IO.Directory.GetFiles("c:\\program files\\proship\\server", "*.log", System.IO.SearchOption.AllDirectories)
+	'Initialize the file content size
+	fileContentSize = 0
+
+	'Set a file reader object to the correct file
+	fileContents = new System.IO.StreamReader(fileName)
+
+	'Create a new queue for capturing the files' contents that we want to keep.
+	newFileContents = new System.Collections.Generic.Queue(Of String)
+
+	'Loop on the files' complete contents
+	Do
+		line = fileContents.ReadLine()
+
+		'If line Is Not Nothing Then
+		If Not String.IsNullOrEmpty(line) Then
+			'If the file's content plus current line length is greater than ~5MB, dequeue
+			Do While fileContentSize + line.Length > 5000000
+			removedLine = newFileContents.DeQueue()
+			fileContentSize = fileContentSize - removedLine.Length
+			Loop
+
+			'Add the line to the output queue
+			newFileContents.EnQueue(line)
+
+			'Add the lines' length to the file content length
+			fileContentSize = fileContentSize + line.Length
+		End If
+	Loop Until line Is Nothing
+
+	fileContents.Close()
+
+	'Output the queue
+	System.IO.File.WriteAllLines(fileName, newFileContents.ToArray())
+
+	LogInfo("Truncated file " + fileName + " to " + fileContentSize.ToString() + " bytes.")
+Next fileName
+
+End Function
+'*********************************************************************************************
+Public Function CleanupTransactionlog()
+	'=========================================================================
+	' This function truncates records in CSTM.Transactionlog older then value
+	' in field CSTM.GeneralSetup(TransactionLogDays)
+	'=========================================================================
+
+	'Set variables
+	Dim sSelectSQL as string = "SELECT TransactionLogDays FROM CSTM.GeneralSetup"
+	Dim sDeleteSQL As String = String.Empty
+	Dim sOptimizeSQL As String = String.Empty
+	Dim sMsg_Text As String = String.Empty
+	Dim sMsg_Type As String = String.Empty
+	Dim iDaysBack as Integer
+	Dim RecordCount As Integer
+	Dim sTransactionLogDays as String = String.Empty
+	Dim sArchiveDate as String = String.Empty
+	Dim dTodayDate as Date = DateTime.Now
+	Dim MySQLDatabase As New OdbcConnection(MySQLConnectionString) 
+	Dim retValue As Integer
+	
+	logInfo("Connecting to the database...")
+	MySQLDatabase.Open()
+	
+	Using queryCommand As New OdbcCommand(sSelectSQL)
+		queryCommand.Connection = MySQLDatabase
+		
+		Using dr As OdbcDataReader = queryCommand.ExecuteReader()
+			LogInfo("Records returned from CSTM.Transactionlog -  " & dr.RecordsAffected)
+			If dr.HasRows() Then 
+				While dr.Read()
+					sTransactionLogDays = dr("TransactionLogDays").ToString()
+					LogInfo("CSTM.Transactionlog(TransactionLogDays) =  " & sTransactionLogDays)
+				End While
+				
+				'Calculates Archive date to use in delete query
+				sArchiveDate = dTodayDate.AddDays(0 - sTransactionLogDays).ToString("yyyy-MM-dd")
+				LogInfo("Archive Date - " & sArchiveDate)
+				
+				'Code deletes records from cstm.transactionlog table older than sArchivedate
+				sDeleteSQL = "Delete from cstm.transactionlog where TransactionDateTime < '" & sArchiveDate & "'"
+				LogInfo("Delete SQL - " & sDeleteSQL)
+					
+				Using QueryDeleteCommand As New odbcCommand(sDeleteSQL)
+					QueryDeleteCommand.Connection = MySQLDatabase
+					
+					retValue = QueryDeleteCommand.ExecuteNonQuery()
+					LogInfo("Records deleted from CSTM.Transactionlog - " & retValue)
+				End Using
+				
+				'Code OPTIMIZE cstm.transactionlog table after deleting records
+				sOptimizeSQL = "OPTIMIZE TABLE CSTM.TRANSACTIONLOG"
+				LogInfo("Delete SQL - " & sOptimizeSQL)
+				
+				Using QueryOptimizeCommand As New odbcCommand(sOptimizeSQL)
+					QueryOptimizeCommand.Connection = MySQLDatabase
+					
+					Using drOptimize As OdbcDataReader = QueryOptimizeCommand.ExecuteReader()
+						If drOptimize.HasRows() Then 
+							While drOptimize.Read()
+								sMsg_Type = drOptimize(2).ToString()
+								sMsg_Text = drOptimize(3).ToString()
+								LogInfo("CSTM.Transactionlog - OPTIMIZE =  " & sMsg_Type & " | " & sMsg_Text)
+							End While
+						Else
+							LogInfo("Optimization of CSTM.TransctionLog table failed.")
+						End If
+					End Using
+				End Using
+			Else
+				LogInfo("No records found in CSTM.TransctionLog table.")
+			End If
+		End Using
+	End Using
+	
+	logInfo("Disconnecting from the database...")
+	MySQLDatabase.Close()
+	
+End Function

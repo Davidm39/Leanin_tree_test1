@@ -1,0 +1,18 @@
+IF GCSYCD = "2" 	&& TRUMBLE
+		
+				if len(allt(sqlresult.name3)) >0
+					replace batch.company with allt(SQLRESULT.name3)	&&B_BATCHMODE Consignee company name
+
+					if len(allt(title)) >0	&& is title present?
+					replace batch.csnam2 with allt(title) + " " + allt(SQLRESULT.name2) + " " + allt(SQLRESULT.name1)	&&B_BATCHMODE 
+					else	&& 
+						replace batch.csnam2 with allt(SQLRESULT.name2) + " " + allt(SQLRESULT.name1) &&Consignee company name
+					endif
+				else
+					if len(allt(title)) >0	&& is title present?t
+						replace batch.company with allt(title) + " " + allt(SQLRESULT.name2) + " " + allt(SQLRESULT.name1)  && b_batchmode Consignee contact
+					else	&& 
+						replace batch.company with allt(SQLRESULT.name2) + " " + allt(SQLRESULT.name1)	&&B_BATCHMODE
+					    REPLACE BATCH.CSNAM2 WITH "ATTN"
+					endif
+				ENDIF

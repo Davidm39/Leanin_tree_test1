@@ -1,0 +1,139 @@
+Sub StartClient()
+	'========================================================================
+	' This subroutine runs each time operator starts Proship. This code opens all 
+	' database DNS connections, creates short cuts for user menu.
+	'========================================================================
+    'Add additional start parameters as required "server=10.1.0.180;" & _
+	Set pCN = CreateObject("ADODB.CONNECTION")	
+	
+	'Connection string CSTM MySQL database.
+	pCN.ConnectionString = "driver={MySQL ODBC 3.51 Driver};" & _
+						"database=cstm;" & _
+						"server=localhost;" & _
+						"uid=proship;" & _
+						"pwd=proship;" & _
+						"option=16386"
+	
+				  
+	'Opens connection to CSTM MySQL Database
+	On Error Resume Next
+	pCN.Open
+	
+	'Code displays error message if Proship can't get connected to CSTM Database. After displaying error we exit ProShip
+	If Err.Number <> 0 Then
+		strErrorMessage = "Received following error message when connecting to CSTM Database" & vbCrLf & vbCrLf & _
+						  Err.Number & "  " & Err.Description & vbCrLf & vbCrLf & _
+						  "Please report error message to support department."
+		strWindowName = "Connecting to DataBase CSTM - StartStopClient"
+		strWindowButtons = vbCritical + vbOkOnly
+		MsgBox strErrorMessage,strWindowButtons,strWindowName
+		
+		'Code forces Proship to shut down.
+		BearsVsPackers()
+	Else
+	
+		'Create entries on History window when right mouse clicking. 
+		AddHistoryPopUp 1, "Void Package"
+
+		'Create entries on User Menu
+		AddUserMenu 1, "ProShip Reports"
+		AddUserMenu 2, "ProShip History Search"
+		AddUserMenu 3, "ProShip Administration"
+		AddUserMenu 4, "Set and Hold Future Shipdate", True
+		AddUserMenu 5, "Test Script"
+		AddUserMenu 12, "Get Carrier Services", True
+		
+		'Init Global Variables
+		Sys.UserGlobal("Futureflag")= "N"
+		Sys.UserGlobal("FutureDate")= Date
+		Sys.UserGlobal("ShipperID") = ""
+		 
+		SetToolTipText "tbIntlInfo", "Edit International Information"
+		SetToolTipText "tbAddtlHandling", "Set/Clear Additional Handling Flag"
+		SetToolTipText "tbSatDel", "Set/Clear Saturday Delivery Flag"
+		SetToolTipText "tbOversize", "Set/Clear Oversize Flag"
+		SetToolTipText "tbSigReq", "Set/Clear Signature Required"
+		SetToolTipText "tbAdultSigReq", "Set/Clear Adult Signature Required"
+		SetToolTipText "tbResidential", "Set/Clear Residential Address Flag"
+		SetToolTipText "tb3PBill", "Display Additional Billing Options"
+		SetToolTipText "tbIntlInfo", "Commercial Invoice "
+		
+		'Code calls function that makes sure extra fields we add to database (CSTM)
+		'are in tables. If field is missing we add field. Temporarily disable 06/04/13
+		Call CMS_Validate()	
+		
+		'Code calls function that gets general set-up information about customer install from CSTM(GeneralSetup) table.
+		Call ReadGeneralSetupTable
+		
+		'Code calls function that updates MySql table
+		Call GetShipperInfo()
+		
+		'Code calls function that updates MySql table
+		Call GetServices()	
+		
+		'Code calls function that builds a carrier name combo box on BOL screen for Generic Carrier
+		Call BuildBOLCarrierComboBox()
+		
+		'Depending on value contained in UseBoxDimensionTable field. Code calls function to build Box Type combo box 
+		'from CSTM(BoxDimensions) table, customer supplied BoxDimensions table or does nothing.
+		Select Case Trim(Sys.UserGlobal("UseBoxDimensionTable"))
+			Case "0"
+				'Do nothing as customer isn't using Box Dimensions
+			Case "1"
+				'Code calls function from User_scripts to find box dimension from CSTM(BoxDimensions) Table
+				Call BuildBoxTypeComboBox
+			Case "2"
+				'Code calls functions to find box information from customer supplied BoxDimensions Table
+				Call CustomerBuildBoxTypeComboBox()
+		End Select
+		
+		'Depending on value contained in UseDepartmentTable field. Code calls function to build Department combo box 
+		'from CSTM(Department) table, customer supplied Department table or does nothing.
+		Select Case Trim(Sys.UserGlobal("UseDepartmentTable"))
+			Case "0"
+				'Do nothing as customer isn't using Department table
+			Case "1"
+				'Code calls function from User_scripts to find department information from CSTM(Department) table
+				Call BuildDepartmentComboBox
+			Case "2"
+				'Code calls functions to find department information from customer supplied Department table
+				Call CustomerBuildDepartmentComboBox()
+		End Select
+		
+		'Depending on value contained in UseCustomerTable field. Code calls function to build Customer combo box 
+		'from CSTM(Customer) table, by CustomerID or Customer Name.
+		Select Case Trim(Sys.UserGlobal("UseCustomerTable"))
+			Case "0"
+				'Do nothing as customer isn't using Customer table
+			Case "1"
+				'Code calls functions to build Customer ComboBox by Customer ID from CSTM(Customer) table
+				Call BuildCustomerIDComboBox()
+			Case "2"
+				'Code calls functions to build Customer ComboBox by Customer name from CSTM(Customer) table
+				Call BuildCustomerNameComboBox()
+		End Select
+		
+		'Added 07-31-2009 - Code calls function that builds ComboBox for LTL Commodities
+		Call BuildLTLCommodityComboBox()
+		
+		'Calls function that set-ups Proship screen and fields for customer 
+		Call CustomerStartStopClient()
+	End If
+End Sub
+
+Sub StopClient()
+	'========================================================================
+	' This subroutine runs each time operator exits Proship. This code closes all 
+	' open DNS connections.
+	'========================================================================
+	
+	'Code closes connection to MySql Database
+	If pCN.State = "1" Then
+		pCN.Close
+		Set pCN = Nothing
+	End If
+	
+	'Code closes connection to SAP
+	'oSAPConnection.Log off
+	
+End Sub

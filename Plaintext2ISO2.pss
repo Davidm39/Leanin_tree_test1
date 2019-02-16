@@ -1,0 +1,107 @@
+Function Plaintext2ISO2(strCountryName)
+ 	'Note: The cases are in alphabetical order based on the country name in COUNTRIES.XML.  
+ 	'For maintianability add new cases in alphabetical order and do not add cases that duplicate results
+	OldCountryName=strCountryName
+	'Some standardization tricks to get closer to the ISO name
+	CountryName = UCase(strCountryName)
+	CountryName = Replace(strCountryName, "ST.", "SAINT")
+	CountryName = Replace(strCountryName, "`", "'")
+	'Now try to interpret dumb stuff the user puts in
+	Select Case strCountryName
+		Case "BOSNIA AND HERZEGOVINA", "BOSNIA", "BOSNIA-HERZEGOVINA"
+			ISO2 = "BA"
+		Case "BRUNEI DARUSSALAM", "BRUNEI"
+			ISO2 = "BN"
+		Case "CENTRAL AFRICAN REPUBLIC", "CENTRAL AFRICAN REP."
+			ISO2 = "CF"
+		Case "COLOMBIA", "COLUMBIA"
+			ISO2 = "CO"
+		Case "CONGO, THE DEMOCRATIC REPUBLIC OF THE", "REPUBLIC OF THE CONGO", "CONGO, DEM. REP. OF", "CONGO, DEMOCRATIC REPUBLIC OF", "DEMOCRATIC REPUBLIC OF THE CONGO"
+			ISO2 = "CD"
+		Case "COTE D`IVOIRE", "COTE D LVOIRE", "IVORY COAST"
+			ISO2 = "CI"
+		Case "FALKLAND ISLANDS (MALVINAS)", "FALKLAND ISLANDS"
+			ISO2 = "FK"
+		Case "GEORGIA", "REPUBLIC OF GEORGIA"
+			ISO2 = "GE"
+		Case "GUINEA-BISSAU", "GUINEA BISSAU"
+			ISO2 = "GW"
+		Case "HOLY SEE (VATICAN CITY STATE)", "VATICAN CITY"
+			ISO2 = "VA"
+		Case "IRAN, ISLAMIC REPUBLIC OF", "IRAN"
+			ISO2 = "IR"
+		Case "KOREA, DEMOCRATIC PEOPLE'S REPUBLIC OF","DEMOCRATIC PEOPLE'S REPUBLIC OF KOREA", "NORTH KOREA"
+			ISO2 = "KP"
+		Case "KOREA, REP. OF", "KOREA,SOUTH", "REPUBLIC OF KOREA", "SOUTH KOREA" 
+			ISO2 = "KR"
+		Case "CAYMAN ISLANDS" 
+			ISO2 = "KY"
+		Case "LAO PEOPLE'S DEMOCRATIC REPUBLIC", "LAO PEOPLE'S DEMOCRATIC REPUBLIC", "LAOS"
+			ISO2 = "LA"
+		Case "LIBYAN ARAB JAMAHIRIYA", "LIBYA"
+			ISO2 = "LY"
+		Case "MACAO", "MACAU"
+			ISO2 = "MO"
+		Case "MACEDONIA, THE FORMER YUGOSLAV REPUBLIC OF", "MACEDONIA", "YUGOSLAVIA"
+			ISO2 = "MK"
+		Case "MICRONESIA, FEDERATED STATES OF", "MICRONESIA"
+			ISO2 = "FM"
+		Case "MOLDOVA, REPUBLIC OF", "MOLDOVA"
+			ISO2 = "MD"
+		Case "NORFOLK ISLAND", "NORFOLK ISLANDS"
+			ISO2 = "NF"
+		Case "NORTHERN MARIANA ISLANDS", "MARIANA ISLANDS"
+			ISO2 = "MP"
+		Case "PAPUA NEW GUINEA", "NEW GUINEA"
+			ISO2 = "PG"
+		Case "RUSSIAN FEDERATION", "RUSSIA"
+			ISO2 = "RU"
+		Case "SAINT KITTS AND NEVIS", "NEVIS", "SAINT CHRISTOPHER(ST KITTS) AND NEVIS", "ST. KITTS AND NEVIS"
+			ISO2 = "KN"
+		Case "SAINT VINCENT AND THE GRENADINES", "SAINT VINCENT"
+			ISO2 = "VC"
+		Case "SAMOA", "WESTERN SAMOA"
+			ISO2 = "WS"
+		Case "SERBIA AND MONTENEGRO", "SERBIA -MONTENEGRO", "SERBIA", "SERBIA-MONTENEGRO"
+			ISO2 = "CS"
+		Case "SLOVAKIA", "SLOVAK REPUBLIC"
+			ISO2 = "SK"
+		Case "SOMALIA", "SOMALI"
+			ISO2 = "SO"
+		Case "SYRIAN ARAB REPUBLIC", "SYRIA"
+			ISO2 = "SY"
+		Case "TAIWAN, PROVINCE OF CHINA", "TAIWAN"
+			ISO2 = "TW"
+		Case "TANZANIA, UNITED REPUBLIC OF", "TANZANIA"
+			ISO2 = "TZ"
+		Case "TRINIDAD AND TOBAGO", "TRINIDAD & TOBAGO"
+			ISO2 = "TT"
+		Case "TURKS AND CAICOS ISLANDS", "TURKS & CAICOS ISLANDS"
+			ISO2 = "TC"
+		Case "UNITED ARAB EMIRATES", "U.A.E."
+			ISO2 = "AE"
+		Case "UNITED KINGDOM", "GREAT BRITAIN", "GUERNSEY", "JERSEY"
+			ISO2 = "GB"
+		Case "UNITED STATES", "UNITED STATES of AMERICA", "U.S.", "USA", "U.S.A", "US of A"
+			ISO2 = "US"
+		Case "VIET NAM", "VIETNAM"
+			ISO2 = "VN"
+		Case "VIRGIN ISLANDS, BRITISH", "BRITISH VIRGIN ISLANDS"
+			ISO2 = "VG"
+		Case "WALLIS AND FUTUNA", "WALLIS AND FUTUNA ISLANDS"
+			ISO2 = "WF"
+		Case Else 'Else see if it is in the system country list
+			ISO2 = SYS.E("//COUNTRIES/COUNTRY[PLAINTEXT=""" & Trim(strCountryName) & """]/SYMBOL")
+	End Select
+	
+	If ISO2 = "" Then
+		'Code displays error message if not country match is found
+		MsgBox "Country Name  " & UCase(strCountryName) & "  isn't found in Country List",vbInformation + vbOkOnly,"Country Code Lookup"
+		Plaintext2ISO2=""
+		s.e("SHIPMENT/COMMON/CONSIGNEE_COUNTRY") = ""
+	Else
+		'Code populates ProShip country field with ISO Country code
+		Plaintext2ISO2=ISO2
+		s.e("SHIPMENT/COMMON/CONSIGNEE_COUNTRY") = ISO2 
+	End If
+End Function

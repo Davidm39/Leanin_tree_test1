@@ -1,0 +1,151 @@
+Sub LoadShipment()
+	'======================================================================
+	' This subroutine queries against customers SAP or Progress databases. We are also
+	' allowing miscellaneous shipments, but operatopr has to key shipto information.
+	'======================================================================
+
+	'Code stores proship fields into a variable
+	strDeliveryID 		= s.e("SHIPMENT/COMMON/SHIPPER_REFERENCE")
+	sRacksOnlyShipment	= Shipment.E("/SHIPMENT/CMS/CSTM_RACKS_ONLY_SHIPMENT_FLAG") 
+	
+	'Code clears shipment info from shipping screen and re-queries
+	S.RESET()
+	s.e("SHIPMENT/COMMON/SHIPPER_REFERENCE") = UCase(Trim(strDeliveryID))
+	Shipment.E("/SHIPMENT/CMS/CSTM_RACKS_ONLY_SHIPMENT_FLAG") = sRacksOnlyShipment
+	OkToContinue = False
+	
+	'Code decides which LoadShipment to process
+	If Shipment.E("/SHIPMENT/CMS/CSTM_MAILROOM") = "Y" Then
+		'Code calls function gets ShipTo information from feeder_addresses table
+		'for shipments processed by mailroom.
+		Call MailroomReadFeederAddressTable(strDeliveryID, OkToContinue)
+	Else
+		'Code calls function to get customer ShipTo information for Delivery ID.
+		Call CustomerLoadShipment(strDeliveryID, OkToContinue)
+	End If
+
+	'Code stops shipment and reset ProShip screen
+	If OkToContinue = False Then
+		S.RESET()
+		SetFocus "/SHIPMENT/COMMON/SHIPPER_REFERENCE"	
+		Exit Sub
+	End If
+			
+	'Depending on value contained in UseShipViaTable field from table GENERALSETUP. 
+	'Code calls function to translate Customer ShipVia to ProShip ShipMethod from
+	'CSTM database, customer supplied database or does nothing.	
+	strShipMethod =  Trim(s.e("SHIPMENT/CMS/CSTM_CUSTOMER_SHIPMETHOD_IN"))
+	strTranslateType = "InBound"
+	
+	If Shipment.E("/SHIPMENT/CMS/CSTM_MAILROOM") = "N" Then
+		Select Case Trim(Sys.UserGlobal("UseShipViaTable"))
+			Case "0"
+				'Do nothing as customer isn't using ShipVia Table
+			
+			Case "1"
+				'Code calls function from User_scripts to find Translate ShipVia from CSTM database
+				Call TranslateShipMethod(strShipMethod, strTranslateType)
+			
+			Case "2"
+				'Code calls functions to find Translate ShipVia from customer supplied table
+				Call CustomerTranslateShipMethod(strShipMethod, strTranslateType)
+		End Select
+	End If
+	
+	'07-31-2009 - Code saves DeliveryID that was scanned. This is check against what is in DeliveryID field
+	'at end of shipment.
+	s.e("SHIPMENT/CMS/CSTM_ORIGINAL_DELIVERYID") = s.e("SHIPMENT/COMMON/SHIPPER_REFERENCE")
+
+	'Code removes all country codes from State drop down box for Domestic Shipments
+	Call FixStates
+	
+	'Code checks for shipment going to Canada and using FedEx. If so then
+	'we change Admissibility package type because of a problem in FedEx software.
+	If s.e("SHIPMENT/COMMON/CONSIGNEE_COUNTRY") = "CA" Then
+		If Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.CAFE.GND" _
+			Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.CAFE.HDL" _
+			Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.FXRS.PRI" _
+			Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.FXRS.STD" _
+			Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.FXRS.FOV" _
+			Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.FXRS.2DA" _
+			Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.FXRS.FOVI" _
+			Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.FXRS.PRII" _
+			Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.FXRS.2DAI" _
+			Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.FXRS.FR1I" _
+			Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.FXRS.IEF" _
+			Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.FXRS.FR1" Then
+			Shipment.E("//SHIPMENT/COMMON/ADMISSIBILITY_PACKAGE_TYPE") = "BOX"
+		End If
+	End If	
+	
+	'Added 05-31-2015 - Codes sets on email notification and third party billing for customer Riverside Casino
+	If Shipment.E("/SHIPMENT/CMS/CSTM_CUSTOMERID") = "2961492" Then
+		Shipment.E("/SHIPMENT/PACKAGE/NOTIFICATION_EMAIL_TO1") 	= "RUBY.DICKY@RIVERSIDECASINOANDRESORT.COM"
+		Shipment.E("/SHIPMENT/PACKAGE/NOTIFICATION_EMAIL_TO2") 	= "DAN.UITERMARK@RIVERSIDECASINOANDRESORT.COM"
+		Shipment.E("/SHIPMENT/PACKAGE/NOTIFICATION_EMAIL_TO3") 	= "JOSHUA.DALE@RIVERSIDECASINOANDRESORT.COM"
+		Shipment.E("/SHIPMENT/PACKAGE/NOTIFICATION_EMAIL_TO4") 	= "AP@RIVERSIDECASINOANDRESORT.COM"
+		Shipment.E("/SHIPMENT/PACKAGE/NOTIFICATION_EVENT_TYPE") = "7"
+		
+		Shipment.E("/SHIPMENT/COMMON/TERMS") 				= "THIRD_PARTY"
+		Shipment.E("/SHIPMENT/PACKAGE/TERMS") 				= "THIRD_PARTY"
+		Shipment.E("/SHIPMENT/COMMON/CONSIGNEE_ACCOUNT")	= "0393A4"
+		
+		Shipment.E("/SHIPMENT/COMMON/TPBILL_COMPANY") 		= "RIVERSIDE CASINO & RESORT" 
+		Shipment.E("/SHIPMENT/COMMON/TPBILL_ADDRESS1") 		= "3184 HIGHWAY 22" 
+		Shipment.E("/SHIPMENT/COMMON/TPBILL_CITY") 			= "RIVERSIDE"
+		Shipment.E("/SHIPMENT/COMMON/TPBILL_STATE") 		= "IA" 
+		Shipment.E("/SHIPMENT/COMMON/TPBILL_POSTALCODE")	= "52327" 
+		Shipment.E("/SHIPMENT/COMMON/TPBILL_COUNTRY") 		= "US"
+	End If
+	
+	'Code checks system.xml looking for scale set-up for proship client, If found the
+	'we read scale for weight.
+	If SYS.ElementExists("SYSTEM/CONFIG/SCALE/SYMBOL") > 0 Then
+		If SYS.E("SYSTEM/CONFIG/SCALE/SYMBOL") <> "" Then
+			'Code gets weight from scale.
+			s.e("SHIPMENT/PACKAGE/WEIGHT") = Shipment.Weigh 
+			
+			'Code checks for weight from scale and if zero then displays message
+			'for operator to place box on scale.
+			If CNum(s.e("SHIPMENT/PACKAGE/WEIGHT")) > 0 Then
+				s.Rate 0
+			Else
+				Call GetWeight(OkToRateShipment)
+			End If
+		End If
+	End If
+	
+	'Added 05/22/2017 Set ship method to USPS 1ST CLASS DEPENDING ON Weight
+	  If Trim(Shipment.E("SHIPMENT/COMMON/SHIPPER")) = "TRADE" _
+		  And Trim(Shipment.E("SHIPMENT/COMMON/CONSIGNEE_COUNTRY")) = "US" _
+		  And CNum(s.e("SHIPMENT/PACKAGE[1]/WEIGHT")) < .99 _ 
+		  And Shipment.E("SHIPMENT/SERVICE") <> "BWTI_UPS.UPS.2AM" _
+		  And Shipment.E("SHIPMENT/SERVICE") <> "BWTI_UPS.UPS.2DA" _
+		  And Shipment.E("SHIPMENT/SERVICE") <> "BWTI_UPS.UPS.NAM" _
+		  And Shipment.E("SHIPMENT/SERVICE") <> "BWTI_UPS.UPS.NDA" _
+		  And Shipment.E("SHIPMENT/SERVICE") <> "BWTI_UPS.UPS.NDS" Then
+		  Shipment.E("SHIPMENT/SERVICE") = "ELS.USPS.FCSP"
+		  ''	And  Trim(s.e("SHIPMENT/CMS/CSTM_CUSTOMER_SHIPMETHOD_IN")) = "90" _
+	  ElseIf Trim(Shipment.E("SHIPMENT/COMMON/SHIPPER")) = "CONSUMER" _       
+		And Trim(Shipment.E("SHIPMENT/COMMON/CONSIGNEE_COUNTRY")) = "US" _
+		And  Trim(s.e("SHIPMENT/CMS/CSTM_CUSTOMER_SHIPMETHOD_IN")) = "90" _
+		And CNum(s.e("SHIPMENT/PACKAGE[1]/WEIGHT")) < .99 Then
+		
+		Shipment.E("SHIPMENT/SERVICE") = "ELS.USPS.FCSP"
+	 End If	
+	
+	'Code checks to see if AUTOSHIP equals True. If so then ship package with out 
+	'shipper needing to do anything else.
+	If Sys.E("/SYSTEM/USERCONFIG/AUTOSHIP") = "True" Then
+		S.Ship
+	End If
+	
+	'Code calls function that logs information in Database CSTM table Transactionlog
+	strText = Shipment.X.SelectSingleNode("/SHIPMENT").XML
+	strText = Replace(strtext, chr(34), "")
+	strPackageID  = s.e("/SHIPMENT/COMMON/SHIPPER_REFERENCE")
+	strFunctionname = "LoadShipment.pss"
+	StrMessage = "XML at end of LoadShipment"
+	Call AddLogTransaction(StrText, StrFunctionName, StrMessage, strPackageID)	
+
+End Sub

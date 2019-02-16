@@ -1,0 +1,246 @@
+Sub PostShipShipment()
+	'==================================================================
+	'This subroutine calls functions to update customer databases and CSTM
+	'history table with shipment information.
+	'==================================================================
+	
+	ShipmentBillingTerms = ""
+	intMultiPieceTotalCharges = 0.00
+
+	'need to store some info for fake MPS
+	iXofXofY = CNum(Shipment.E("//PIECE_NUMBER"))
+	iYofXofY = CNum(Shipment.E("//PIECE_TOTAL"))
+
+	'store first tracking number only 
+	If iXofXofY = 1 And iYofXofY > 1 Then
+		SYS.UserGlobal("FAKEMPS/TRACKING_NUMBER1") = Shipment.E("/SHIPMENT/PACKAGE/TRACKING_NUMBER")		
+		Shipment.E("/SHIPMENT/COMMON/FAKE_MPS_TOTALS/" & Shipment.E("/SHIPMENT/SERVICE") & "/TRACKING_NUMBER1") = Shipment.E("/SHIPMENT/PACKAGE/TRACKING_NUMBER")	
+	ElseIf iYofXofY > 1 Then
+		Shipment.E("/SHIPMENT/COMMON/FAKE_MPS_TOTALS/" & Shipment.E("/SHIPMENT/SERVICE") & "/TRACKING_NUMBER1") = SYS.UserGlobal("FAKEMPS/TRACKING_NUMBER1")
+	End If
+	
+	'for MPS
+	If iXofXofY > 1 Then	
+		'we need to store the package related nodes
+		Set ndl0 = S.X.SelectSingleNode("/SHIPMENT/PACKAGE")
+		If Not ndl0 is Nothing Then
+			For Each nod0 In ndl0.childNodes	
+				SYS.UserGlobal("FAKEMPS/PACKAGE[" & iXofXofY & "]/P/" & nod0.nodename) = nod0.text
+			Next
+		End If	
+		'we also need to store fee related nodes that are returned in common
+		Set ndl0 = S.X.SelectSingleNode("/SHIPMENT/COMMON")
+		If not ndl0 is Nothing Then
+			For Each nod0 In ndl0.childnodes	
+				Select Case nod0.nodename
+					Case "TOTAL", "BASE", "SPECIAL", "DISCOUNT"
+						'these are the basics
+						SYS.UserGlobal("FAKEMPS/PACKAGE[" & iXofXofY & "]/C/" & nod0.nodename) = nod0.text
+						
+						'If UCase(nod0.nodename) = "TOTAL" Then
+							'intMultiPieceTotalCharges = intMultiPieceTotalCharges = CNum(nod0.text)
+						'End If
+						'MsgBox nod0.nodename & " | " & nod0.text & vbCrLF & intMultiPieceTotalCharges,,"Line 044"
+					Case "OVERSIZE_FEE", "DECLARED_VALUE_FEE", "COD_FEE", "BILLED_WEIGHT"
+						'these are additional ones that may be of interest	
+						SYS.UserGlobal("FAKEMPS/PACKAGE[" & iXofXofY & "]/C/" & nod0.nodename) = nod0.text
+					Case Else
+						'dunno
+				End Select		
+			Next
+			Set ndl0 = Nothing	
+		End If
+	End If
+
+'we need to split insert statements to accomodate fake MPS
+		'get the x and y of the XofY
+	iXofXofY = CNum(Shipment.E("//PIECE_NUMBER"))
+	iYofXofY = CNum(Shipment.E("//PIECE_TOTAL"))
+	'*******************************************************************
+	'this indicates the final package for fake MPS - needs a seperate SQL command
+	If iXofXofY = iYofXofY And iXofXofY > 1 Then	
+		total = 0
+		base = 0
+		discount = 0
+		special = 0
+		'we'll build a fake total list to pull all totals out of
+		For X = 1 To CNum(Shipment.E("/SHIPMENT/PACKAGE/PIECE_TOTAL"))
+			'in this section you can now pull back the list that we placed in SYS.UserGlobal("FAKEMPS/PACKAGE[X]/C/") and SYS.UserGlobal("FAKEMPS/PACKAGE[X]/P/")  if a more advanced db write back is neccissary for total costs/etc
+			'MsgBox SYS.UserGlobal("FAKEMPS/PACKAGE[X]/C/TOTAL") 
+		Next	
+
+		REM sSQL = "INSERT INTO package_header (shipment_key, consignee_company, consignee_contact, " 
+		REM msgbox "final mps" & sSQL			
+	
+		REM For X = 1 To CNum(Shipment.E("/SHIPMENT/PACKAGE/PIECE_TOTAL"))
+			REM 'make and entery for each package
+			REM sSQL = "INSERT INTO package_detail (ship_key, terms, packaging, shipdate, shipper, "
+			REM msgbox "final mps packages:" & sSQL
+			REM End If	
+		REM Next
+		
+		'lets clear out all our fake MPS global variables  THIS IS IMPORTANT!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		Set N = SYS.DD.SelectSingleNode("/SYSTEM/PROSHIP_GLOBALS/FAKEMPS")
+		If Not N is Nothing then 
+		   N.parentnode.removechild(N)
+		End If
+		Set N = Nothing
+		
+	'its fake MPS but not final package
+	ElseIf iYofXofY > 1 Then
+		'if you just want to do a db write back everytime for fake MPS, insert it here
+	'its not a fake MPS	
+	Else
+	'Change INSERT below as noted to include eim_email_sent
+	'save COMMON packages to postgresql
+	End If	
+
+	'Code calls function to parse out carrier and service from Proship service field.
+	ProShipCarrier = s.e("SHIPMENT/SERVICE")
+	Call ParseCarrierAndService (ProShipCarrier, CarrierName, CarrierService)
+	
+	'Code calls function to figure out payment terms for shipment.
+	Call FigureoutShipmentPaymentTerms(CarrierName, ShipmentBillingTerms)
+	
+	'Code calls function to figure out Shipment terms
+	Call FigureoutShipmentTerms()
+	
+	'Code calls function to convert ProShip Ship Method to customes ship method.
+	strTranslatetype = "OutBound"
+	strShipMethod = s.e("SHIPMENT/SERVICE")
+		
+	'Code populates a tracking number field so commerical invoice would print
+	'carrier tracking number.
+	If s.e("SHIPMENT/COMMON/CONSIGNEE_COUNTRY") <> "US" Then
+		s.e("SHIPMENT/COMMON/WAYBILL_NUMBER") = Trim(s.e("SHIPMENT/PACKAGE[1]/TRACKING_NUMBER"))
+	End If	
+	
+	'Code forces 0.00 into ProShip field TOTAL. Incase this field isn't populate with 0.00 or an acutal shipping charge
+	If CNum(s.e("SHIPMENT/COMMON/TOTAL")) > 0.00 Then
+	Else
+		s.e("SHIPMENT/COMMON/TOTAL") = "0.00"
+	End If
+	
+	'Code combines fields SHIPPER_REFERNCE & TRACKING_NUMBER) together and stores into 
+	'ProShip Node (SHIPMENT/CMS/CSTM_DELIVERYKEY). Code also pads right shipper_reference
+	'for 10 characters to make everything history window look Okay.
+	strShipperReference = S.E("SHIPMENT/COMMON/SHIPPER_REFERENCE")
+	strShipperReference = RPad(strShipperReference," ",10)
+	S.E("SHIPMENT/CMS/CSTM_DELIVERYKEY") = strShipperReference  & " - " & Trim(S.E("SHIPMENT/PACKAGE/TRACKING_NUMBER"))		
+
+	'Depending on value contained in UseShipViaTable field from table GENERALSETUP. 
+	'Code calls function to translate Customer ShipVia to ProShip ShipMethod from
+	'CSTM database, customer supplied database or does nothing.
+	Select Case Trim(Sys.UserGlobal("UseShipViaTable"))
+		Case "0"
+			'Do nothing as customer isn't using ShipVia Table
+		
+		Case "1"
+			'Code calls function from User_scripts to find Translate ShipVia from CSTM database
+			Call TranslateShipMethod(strShipMethod, strTranslateType)
+		
+		Case "2"
+			'Code calls functions to find Translate ShipVia from customer supplied table
+			Call CustomerTranslateShipMethod(strShipMethod, strTranslateType)
+	End Select	
+	
+	'Code populates node PSVOIDID with (ELS, LTL, MR) and tracking number since ProShip doesn't.
+	If Left(Trim(s.e("SHIPMENT/SERVICE")),8) = "ELS.USPS"  Then
+		s.e("SHIPMENT/PACKAGE/PS_VOID_ID") = "ELS." & Trim(S.E("SHIPMENT/PACKAGE/TRACKING_NUMBER"))
+		'Added 05-31-2015 - Code blanks outs field below if rated as UPS or Fedex shipments first
+		Shipment.E("/SHIPMENT/COMMON/FUEL_SURCHARGE") 	 	= "0.00"
+		Shipment.E("/SHIPMENT/COMMON/EXTENDED_AREA_FEE")	= "0.00"
+		Shipment.E("/SHIPMENT/COMMON/RESIDENTIAL_FEE") 		= "0.00"
+	ElseIf Left(Trim(s.e("SHIPMENT/SERVICE")),8) = "BWTI_LTL"  Then
+		s.e("SHIPMENT/PACKAGE/PS_VOID_ID") = "BLTL." & Trim(S.E("SHIPMENT/PACKAGE/TRACKING_NUMBER"))
+		'Code takes freight charge field from BOL screen and populates Proship charge fields
+		s.e("SHIPMENT/COMMON/BASE") = s.e("SHIPMENT/CMS/BOL/CSTM_BOL_FREIGHT_CHARGE")
+		s.e("SHIPMENT/COMMON/TOTAL") = s.e("SHIPMENT/CMS/BOL/CSTM_BOL_FREIGHT_CHARGE")
+	ElseIf Left(Trim(s.e("SHIPMENT/SERVICE")),6) = "MR.LTL"  Then
+		s.e("SHIPMENT/PACKAGE/PS_VOID_ID") = "BLTL." & Trim(S.E("SHIPMENT/PACKAGE/TRACKING_NUMBER"))
+		'Code takes freight charge field from BOL screen and populates Proship charge fields
+		s.e("SHIPMENT/COMMON/BASE") = s.e("SHIPMENT/CMS/BOL/CSTM_BOL_FREIGHT_CHARGE")
+		s.e("SHIPMENT/COMMON/TOTAL") = s.e("SHIPMENT/CMS/BOL/CSTM_BOL_FREIGHT_CHARGE")
+	End If
+		
+	'Code populates a tracking number field so commerical invoice would print
+	'carrier tracking number.
+	If s.e("SHIPMENT/COMMON/CONSIGNEE_COUNTRY") <> "US" Then
+		s.e("SHIPMENT/COMMON/WAYBILL_NUMBER") = Trim(s.e("SHIPMENT/PACKAGE[1]/TRACKING_NUMBER"))
+	End If
+	
+	'Code calls function that reads each package weight to figure what is shipment weight. 
+	'This function gets called if ProShip leaves field Billed_weight empty
+	If s.e("SHIPMENT/COMMON/BILLED_WEIGHT") = "" Then
+		iShipmentWeight = 0
+		Call GetShipmentWeight(iShipmentWeight)
+		s.e("SHIPMENT/COMMON/BILLED_WEIGHT") = iShipmentWeight
+	End If
+	
+	'Added - 03-02-2010 Code calls routine that builds Address label nodes if customer
+	'wants to only print customer address labels
+	If s.e("/SHIPMENT/CMS/CSTM_ONLY_PRINT_ADDRESS_LABEL_FLAG") = "True" Then
+		Call BuildAddressLabelNodes()
+	End If
+	
+	'Code calls function that logs information in Databse CSTM table Transactionlog
+	strText = Shipment.X.SelectSingleNode("/SHIPMENT").XML
+	strText = Replace(strtext, chr(34), "")
+	strPackageID  = s.e("/SHIPMENT/COMMON/SHIPPER_REFERENCE")
+	strFunctionname = "PostShipShipment.pss"
+	StrMessage = "XML at end of PostShipShipment"
+	Call AddLogTransaction(StrText, StrFunctionName, StrMessage, strPackageID)	
+	
+	'Code calls function to insert shipments into CSTM(History) table if only print
+	'address label flag is set to False
+	If s.e("SHIPMENT/CMS/CSTM_ONLY_PRINT_ADDRESS_LABEL_FLAG") = "False" Then
+		'Code calls function to insert shipments to DataBase CSTM(History) Table
+		OkToContinue = True
+		Call UpdateHistory(OkToContinue)
+		
+		'Code calls fnction to insert SWOG items into Database CSTM(History)Table
+		If S.E("SHIPMENT/CMS/SWOG/DELIVERY") <> "" Then
+			strSwogDelivery = Trim(S.E("SHIPMENT/CMS/SWOG/DELIVERY"))
+			Fieldz = Split(strSwogDelivery,",")
+			Counter = 0
+			 
+			Do Until Counter > UBound(Fieldz) 	
+				strDeliveryID = Fieldz(Counter)
+				
+				'Only calls function if strDeliveryID is not empty
+				If strDeliveryID <> "" Then
+					Call UpdateSWOGHistory(strDeliveryID, OkToContinue)
+				End If
+				Counter = Counter + 1
+			Loop
+		End If
+	End If
+	
+	'Updated 03-20-2013 - Code updates customers host system with shipment information only if 
+	'CSTM(History) table was updated 
+	If OkToContinue = True Then
+		If Shipment.E("/SHIPMENT/SERVICE") <> "BWTI_AES.AES.AESDIRECT" Then
+			If Left(Trim(Shipment.E("/SHIPMENT/SERVICE")),8) <> "ELS.USPS" Then
+			
+				'Code calls function that updates customers host system with shipment data
+				'for non Endicia shipments 
+				Call CustomerPostShipShipment()
+				
+			ElseIf Left(Trim(Shipment.E("/SHIPMENT/SERVICE")),8) = "ELS.USPS" Then
+				If iXofXofY = iYofXofY And iXofXofY = 0 Then
+
+					'Code calls function that updates customers host system with shipment data
+					'for single package Endicia shipments 
+					Call CustomerPostShipShipment()
+					
+				ElseIf iXofXofY = iYofXofY And iXofXofY > 1 Then
+				
+					'Code calls function that updates customers host system with shipment data
+					'for multiple package Endicia shipments 
+					Call CustomerPostShipShipmentMultipleBoxEndicia(OkToContinue)
+				End If
+			End If
+		End If
+	End If
+	
+End Sub

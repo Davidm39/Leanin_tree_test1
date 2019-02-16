@@ -1,0 +1,273 @@
+Sub User(Index)
+	'======================================================================
+	' This subroutine runs subroutines based upon option operator picked from
+	' User Menu on Shipping screen.
+	'======================================================================
+	Select Case (Index)
+		Case 1
+			'Code starts Administration aspx web page
+			ProShipAdministration
+		Case 2
+			'Code starts History search aspx web page
+			SearchHistory
+		Case 3
+			'Code calls subroutine that allows operator to change current ship date
+			FutureOnOff
+		Case 12
+			'Code calls subroutine to list out carrier services.
+			GetServices
+		Case 15
+			'Code calls subroutine that allows us to test code ideas..
+			TestCodeScript
+		Case 16
+			'Code calls subroutine that allows us to test code ideas..
+			SAPRFCCalls
+		Case 17
+			'Code calls subroutine that allows us to test code ideas..
+			Set FuncControl = CreateObject("SAP.Functions")
+			FuncControl.Connection = oConnection
+			oConnection.Logoff
+			'SignoffSAP			
+		REM Case 16
+			REM 'Code calls subroutine that looks up ORACLE shipments
+			REM LookupOracleShipments
+		Case Else
+			MsgBox Index & " Not handeled"
+	End Select
+End Sub
+
+Sub ProShipAdministration()
+	'=========================================================================
+	' This subroutine starts Administration asp page as default.
+	'=========================================================================
+	Launch_URL "http://gxusbr-s9425/proship/index.aspx"
+End Sub
+
+Sub SearchHistory()
+	'=========================================================================
+	' This subroutine starts history search asp page as default.
+	'=========================================================================
+	Launch_URL "http://gxusbr-s9425/proship/search.aspx"
+End Sub
+
+Sub FutureOnOff()
+	'=========================================================================
+	' This subroutine pops up a screen allowing operator to change current ship date to
+	' a date into the future. This date change only affects shipping station that ran this
+	' subroutine.
+	'=========================================================================
+	DIM Futuredate
+	DIM Futureflag
+	Futuredate = Celse (now, "mm/dd/yyyy")
+
+	'... Prompt for Future Ship date, default to Today
+	Futuredate = BigInputBox("Enter the Future Date for Shipments", "Ship Date", Futuredate)
+	Sys.UserGlobal("FutureDate")= CDate(Futuredate)
+	'..Set Ship Date = Futuredate
+	s.e("//SHIPDATE") = Sys.UserGlobal("FutureDate")
+	'... Set Futureflag = TRUE if Futuredate <> Today
+	IF Futuredate <> Celse (now, "mm/dd/yyyy") Then
+		Futureflag = "Y"
+	Else
+		Futureflag = "N"
+	End If
+	Sys.UserGlobal("Futureflag")= Futureflag
+End Sub
+
+Sub GetServices()
+	'=========================================================================
+	' This subroutine creates an Excel Spreadsheet of carrier services that customer
+	' has been configured on their system. This subroutine is called from User menu
+	' on shipping screen.
+	'=========================================================================
+	Set ndlS = sys.dd.SelectNodes("//SERVICES/SERVICE")
+	serviceString = "NextShip Ship-Via,NextShip Ship-Via Description, Customers Ship-Via Name"
+	saveAsFile serviceString & vbCrlf & vbCrlf, "C:\Services.csv", true
+	For each nodS in ndlS
+		serviceString = nodS.SelectSingleNode("SYMBOL").text
+		'rem the following line out if you only want  symbols
+		Set nodP = nodS.SelectSingleNode("PLAINTEXT")
+		If not nodP is nothing Then
+			serviceString = serviceString & "," & nodP.text & "," 
+		Else
+			serviceString = serviceString & "No Description" & ","
+		End If 
+		saveAsFile serviceString & vbCrlf, "C:\Services.csv", true
+	Next
+End Sub
+
+Sub TestCodeScript()
+	'========================================================================
+	' This subroutine allows programmer to insert code below and test from ProShip
+	' warehouse shipping scree.
+	'========================================================================
+	Dim Logon
+	
+	'Creating Object for Signing onto SAP through BAPI
+	'Set rsReadTable = CreateObject("ADODB.RecordSet")
+	'Set FuncControl = CreateObject("SAP.Functions")
+	Set oBAPICtrl = CreateObject("SAP.BAPI.1")
+	'Set LogonControl = CreateObject("SAP.LogonControl.1")
+	Set oConnection = oBAPICtrl.Connection
+	'Set oConnection = LogonControl.NewConnection
+	oConnection.Client = "030"
+	oConnection.User = "PROSHIP"
+	oConnection.Language = "EN"
+	oConnection.ApplicationServer = "USBRSAPJ"
+	oConnection.Password = "PRO1SHIP"
+	oConnection.System = "00"
+	
+	'Code below will open connection to SAP and sign on
+	If oConnection.Logon(0,True) <> True Then
+		Set oConnection = Nothing
+		Logon = False
+		MsgBox "No Access to R/3 System", vbOkOnly
+	Else
+		Logon = True
+	End If
+	
+	If Logon Then
+		MsgBox "BAPI - Logged on Successfully..."
+	End If
+	
+	Set oGetDelivery = oBAPICtrl.GetSAPObject("OutboundDelivery")
+	
+	Set oDelivery_Head = oBAPICtrl.DimAs(oGetDelivery, "ZDeliveryGetdetail", "DeliveryHead")
+	Set oDelivery_Item = oBAPICtrl.DimAs(oGetDelivery, "ZDeliveryGetdetail", "DeliveryItem")
+	Set oDelivery_Containers = oBAPICtrl.DimAs(oGetDelivery, "ZDeliveryGetdetail", "DeliveryContainer")
+	Set oPartners= oBAPICtrl.DimAs(oGetDelivery, "ZDeliveryGetdetail", "Partners")
+	Set oReturn= oBAPICtrl.DimAs(oGetDelivery, "ZDeliveryGetdetail", "Return")
+	Dim strDeliveryID
+	
+	strDeliveryId = "0080663297"
+	
+	oGetDelivery.ZDeliveryGetdetail strDeliveryId, oReturn, oDelivery_Head, oPartners, oDelivery_Item, oDelivery_Containers
+	
+	MsgBox "Return Type:  " & oReturn("TYPE") 'success has a null value
+	
+	If oReturn("TYPE") <> "" Then  'success has a null value
+		MsgBox "Failed on oBAPICtrl.GetSAPObject(OutboundDelivery)"
+	Else
+		MsgBox "SAP Object created successfully!!!!!"
+		MsgBox "Delivery:  " & oDelivery_Head("DELIV_NUMB") & " ShipPt:  " & oDelivery_Head("SHIP_POINT")
+		i=1	
+		Do while oDelivery_Item.RowCount >= i   'structures are arrays
+			MSGBox "DeliveryItem:  " & oDelivery_Item(i,"DELIV_ITEM") & " Mat:  " & oDelivery_Item(i,"MATERIAL") & " Batch:  " & oDelivery_Item(i,"BATCH")
+			i=i+1
+		loop
+	End If
+	
+	
+	
+	'**** RFC Table Reads
+	REM FuncControl.Connection = oConnection	
+	REM Set RFC_READ_TABLE = FuncControl.Add("RFC_READ_TABLE")
+	REM Set eQuery_Tab = RFC_READ_TABLE.Exports("QUERY_TABLE")
+	REM Set TOPTIONS   = RFC_READ_TABLE.Tables("OPTIONS")
+	REM Set TDATA      = RFC_READ_TABLE.Tables("DATA")
+	REM Set TFIELDS    = RFC_READ_TABLE.Tables("FIELDS")
+	
+	
+	REM eQUERY_TAB.Value = "ZCONTAINER"
+	REM TOPTIONS.AppendRow 'new item line 
+	REM TOPTIONS(1,"TEXT")="VBELN EQ '0080663297'"
+	
+	REM MsgBox "Just before call"
+	
+	REM If RFC_READ_TABLE.Call = True Then
+		REM IF TDATA.RowCount > 0 Then
+			REM MsgBox "Call to RFC_READ_TABLE successful! Data Found"
+			REM i = TDATA.RowCount
+			REM 's = TDATA.Fields("Delivery").Value
+			REM MsgBox i & " | " & TDATA(1,"WA")
+		REM Else
+			REM MsgBox "Call to RFC_READ_TABLE successful! No Data Found"
+		REM End If
+	REM Else
+		REM MsgBox "Call to RFC_READ_TABLE failed!"
+	REM End If
+		
+	oConnection.Logoff
+
+	
+End Sub
+
+Sub SAPRFCCalls()
+
+	Dim Logon
+	
+	'Creating Object for Signing onto SAP through RFC Calls
+	Set FuncControl = CreateObject("SAP.Functions")
+	Set LogonControl = CreateObject("SAP.LogonControl.1")
+	Set oConnection = LogonControl.NewConnection
+	oConnection.Client = "030"
+	oConnection.User = "PROSHIP"
+	oConnection.Language = "EN"
+	oConnection.ApplicationServer = "USBRSAPJ"
+	oConnection.Password = "PRO1SHIP"
+	oConnection.System = "00"
+	
+	retCd = oConnection.Logon(0,True)
+	
+	If retCd <> True Then
+		MsgBox "Cannot Log on!!" & "  | " & Retcd
+	Else
+		MsgBox "Logon OK!!!"
+	End If
+	
+	FuncControl.Connection = oConnection	
+	Set RFC_READ_TABLE = FuncControl.Add("RFC_READ_TABLE")
+	Set eQuery_Tab     = RFC_READ_TABLE.Exports("QUERY_TABLE")
+	Set strExport1     = RFC_READ_TABLE.Exports("DELIMITER")
+	Set TOPTIONS       = RFC_READ_TABLE.Tables("OPTIONS")
+	Set TDATA          = RFC_READ_TABLE.Tables("DATA")
+	Set TFIELDS        = RFC_READ_TABLE.Tables("FIELDS")
+	Set rsZContainer   = CreateObject("ADODB.RecordSet")
+	
+	
+	eQUERY_TAB.Value = "ZCONTAINER"
+	strExport1.Value = "|"
+	TOPTIONS.AppendRow 'new item line 
+	TOPTIONS(1,"TEXT")="VBELN EQ '0080663297'"
+	TFIELDS.AppendRow
+	TFIELDS(1,"FIELDNAME") = "VBELN"
+	TFIELDS.AppendRow
+	TFIELDS(2,"FIELDNAME") = "POSNR"
+	
+	MsgBox "Just before call"
+	
+	
+	If RFC_READ_TABLE.Call = True Then
+		IF TDATA.RowCount > 0 Then
+			MsgBox "Call to RFC_READ_TABLE successful! Data Found"
+			i = TDATA.RowCount
+			MsgBox i & " | " & TDATA(1,"WA")
+		Else
+			MsgBox "Call to RFC_READ_TABLE successful! No Data Found"
+		End If
+	Else
+		MsgBox "Call to RFC_READ_TABLE failed!"
+	End If
+		
+	oConnection.Logoff
+	
+	
+	'Code below will sign off and close connection to SAP
+	'oConnection.Logoff
+		REM Set oConnection = Nothing
+		REM Logon = False
+		REM MsgBox "No Access to R/3 System", vbOkOnly
+	REM Else
+		REM Logon = True
+	REM End If
+	
+	REM If Logon Then
+		REM MsgBox "Loggedd off Successfully..."
+	REM End If
+	
+	REM intNumber = "0000027075801211714"
+	REM Call Mod10Routine(intNumber, intCheckDigit)
+	
+	REM MsgBox intnumber & " : " & intCheckDigit
+	
+End Sub

@@ -1,0 +1,95 @@
+Sub PostVoid(IDList)
+	'=========================================================================
+	' This subroutine VOIDS shipment in Customers Database and CSTM(History) table.
+	'=========================================================================
+	IDs = Split(IDList," ")
+	
+	'Reads through list of tracking numbers to void.
+    For CT = Lbound(IDs) to UBound(IDs)
+		strTrackingNumber = IDs(ct)
+
+		If strTrackingNumber <> "" Then
+			'Added 2016-10-21 - Code finds ! character in shipment to void. If character 
+			'found then removes everything from left of character that proship has prefixed 
+			'in front of tracking number
+			If Instr(1,strTrackingNumber,"!") Then
+				iExplantionCharacter = Instr(1,strTrackingNumber,"!")
+				strTrackingNumber = Mid(strTrackingNumber, iExplantionCharacter + 1, 50)
+			End If	
+			
+			Query = "Select PackageID, PSVoidID, Interface, SWOGFlag FROM CSTM.History " & _
+					"Where TrackingNumber = '" & Trim(strTrackingNumber) & "'"	
+			
+			Set rsHistory = pCN.Execute(Query)		
+			
+			If rsHistory.EOF then
+				'Code calls function that logs information in Database CSTM table Transactionlog
+				strText = Query
+				strFunctionname = "PostVoid.pss"
+				StrMessage = "Shipment " & UCASE(strTrackingNumber) & " NOT FOUND in CSTM History table"
+				Call AddLogTransaction(StrText, StrFunctionName, StrMessage, strPackageID)				
+
+				'Displays error message if tracking number not found in CSTM(History) table
+				strErrorMessage = "Shipment " & UCASE(strTrackingNumber) & " NOT FOUND in CSTM History table"
+				strWindowName = "PostVoid"
+				strWindowButtons = vbCritical + vbOkOnly
+				MsgBox strErrorMessage,strWindowButtons,strWindowName
+			Else
+				'Code gets fields from CSTM(History) table that will be used in voiding a shipment
+				strPackageID = Trim(rsHistory.Fields("PackageID").value)
+				strPSVoidID = Trim(rsHistory.Fields("PSVoidID").value)		
+				strInterfaceSource = Trim(rsHistory.Fields("Interface").value)
+				strSWOGFlag = Trim(rsHistory.Fields("SWOGFlag").value)
+				
+				'Code emptys recordset rsHistory
+				Set rsHistory = Nothing
+
+				'If SWOG shipment then we query table History in database CSTM looking for
+				'are deliveries contained on this shipment.
+				If UCase(strSWOGFlag) = "Y" Then 
+					Query = "Select Distinct PackageID FROM CSTM.History " & _
+							"Where PSVoidID = '" & Trim(strPSVoidID) & "' And VoidFlag <> 'Y'"
+			
+					Set rsHistory = pCN.Execute(Query)
+					strDeliveryID = ""
+					rsHistory.MoveFirst
+					Do While Not rsHistory.eof
+						strDeliveryID = strDeliveryID & Trim(rsHistory.Fields("PackageID").value & "") & ","
+						rsHistory.MoveNext
+					Loop			
+				Else
+					strDeliveryID = strPackageID & ","
+				End If
+				
+				'Code runs query to VOID shipment in CSTM(History) table.	
+				Query = "UPDATE CSTM.History set voidflag = 'Y' Where psvoidid = '" & CTrim(strPSVoidID,50) & "'"
+			
+				'Code calls function that logs information in Databse CSTM table Transactionlog
+				strText = Query
+				strFunctionname = "PostVoid.pss"
+				StrMessage = "Void Shipment in History"
+				Call AddLogTransaction(StrText, StrFunctionName, StrMessage, strPackageID)
+			
+				Set rsHistory = pCN.Execute(Query, RecordsAffected)
+				
+				'Displays error message if shipment wasn't VOIDED in CSTM(History) table
+				If RecordsAffected < 1 Then
+					strErrorMessage = "Shipment " & UCASE(strPackageID) & " NOT VOIDED in CSTM History table"
+					strWindowName = "PostVoid"
+					strWindowButtons = vbCritical + vbOkOnly
+					MsgBox strErrorMessage,strWindowButtons,strWindowName
+				Else
+					'Code calls function that voids BATCH shipment in CSTM.Batchinput table
+					If strInterfaceSource = "BATCH" Then
+						Call BatchVoidShipment(strPSVoidId, strDeliveryID, strInterfaceSource, strPackageID)
+					End If
+					
+					'Code calls function that handles VOIDING shipments in customer database
+					Call CustomerPostVoid(strPSVoidId, strDeliveryID, strInterfaceSource, strPackageID)
+				End If
+			End If
+			'Code emptys recordset
+			Set rsHistory = Nothing
+		End If
+	Next	
+End Sub

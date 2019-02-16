@@ -1,0 +1,60 @@
+Function PreCloseOut(CarrierSymbol, ShipperSymbol, CloseoutDate, CloseLane, CloseoutSymbol, CloseoutDescription)
+	'=========================================================================
+	' This subroutine runs each time after user picks a carrier to close. If 
+	' user is closing carrier USPS. Then we update previous day shipments that 
+	' haven't been closed to current shipping date. This solves problem with 
+	' customer not closing carrier USPS each day.
+	'=========================================================================
+	
+	'Code set variables
+	sCurrentDate 		  = Date
+	sFormatedCloseOutDate = Mid(CloseoutDate,5,2) & "/" & Right(CloseoutDate,2) & "/" & Left(CloseoutDate,4)
+	
+	'Code converts current date to format (YYYY-MM-DD)
+	sCurrentDate = DatePart("yyyy",sCurrentDate) _
+		& Right("0" & DatePart("m",sCurrentDate), 2) _
+		& Right("0" & DatePart("d",sCurrentDate), 2) 
+		
+	'Code converts Proship carrier names into carrier names that we can use.
+	If CarrierSymbol = "BWTI_UPS.UPS" Then
+		sCarrierName = "UPS"
+	ElseIf CarrierSymbol = "BWTI_FXRS.FXRS" Then
+		sCarrierName = "FedEx"
+	ElseIf CarrierSymbol = "BWTI_FXRS.CAFE" Then
+		sCarrierName = "Fedex"
+	End If
+		   
+	If carrierSymbol = "BWTI_UPS.UPS" Then
+		If closeoutdate > sCurrentDate Then
+			'Code displays message to operator that they have selected to close manifest 
+			'that isn't today's manifest
+			PreCloseOut = "You have selected to close " & sCarrierName & " manifest for " & sFormatedCloseOutDate & "." & vbCrlf & vbCrlf & _
+						  "This is a future day manifest, close manifest process will be cancelled" 
+							  
+			'Code exits current function
+			Exit Function
+		End If
+	End If
+
+	Select Case Carrier
+		Case "BWTI_USPS.USPS"
+			'Create/Start connection to BWTI database
+			Set pCN2 = CreateObject("ADODB.CONNECTION")
+			pCN2.ConnectionString = "driver={MySQL ODBC 3.51 Driver};database=bwti_ps_usps;server=127.0.0.1;uid=root;pwd=root;option=16386"
+			pCN2.open
+			
+			'Gets current system date
+			CloseDate = CElse(Date(),"YYYYMMDD")
+		
+			'Executes SQL to update shipdate from previous days shipments to todays date for USPS. Customer isn't closing carrier
+			'USPS each day. This will update non closed shipments to date that is being closed.
+			sSQL = "Update ship_detail Set shipdate = '" & CloseDate & "' " & _
+				   "Where shipdate <> '" & CloseDate & "' and shipper = 'MSEC' and closeout_no = 0"
+
+			Set rs = pCN2.Execute(sSQL)
+		
+			'Code closes connection to BWTI database
+			pCN2.Close
+			Set pCn2 = Nothing
+	End Select
+End Function

@@ -1,0 +1,425 @@
+Sub ShowBOLScreen()
+	'======================================================================
+	' This Subroutine gets from Bill of Lading button on Proship screen. This code
+	' builds BOLscreen that operator uses.
+	'======================================================================
+	
+	'Code sets global variable so BOL process in PackStation.pss
+	Sys.UserGlobal("PackScreenType") = "L" 	
+	
+	'Code sets variables for BOL screen
+	blnBOLItemsFound = False
+	iLineCount = 1
+	sWindowTitle = "Items Contained on LTL Shipment  (Click to Update)"
+	sHeaderWidth = "9000"	
+	'These are the static column headers in the detail section. All widths are in Twips
+	sLHeaders = "Pallets|Cartons|Description|Class|Weight"
+	sLHeaderWidth = "1100|1100|4400|1000|1100"	
+	
+	'The Left pane on the screen can be used for anything; we'll display some ship-via information
+	sTextLeftPane = "Delivery # : " & Shipment.E("/SHIPMENT/COMMON/SHIPPER_REFERENCE") & vbcrlf & _
+					"Ship Via   : " & Sys.E("//SERVICE[SYMBOL='" & S.E("//SERVICE") & "']/PLAINTEXT")
+					
+	'The Right pane works quite the same. We'll put the contact information here.
+	sTextRightPane = Shipment.E("//CONSIGNEE_COMPANY") & vbcrlf & _
+					 Shipment.E("//CONSIGNEE_ADDRESS1") & vbcrlf & _
+					 Shipment.E("//CONSIGNEE_ADDRESS2") & vbcrlf & _
+					 Shipment.E("//CONSIGNEE_CITY") & " " & Shipment.E("//CONSIGNEE_STATE") & " " & _
+					 Shipment.E("//CONSIGNEE_POSTALCODE")	
+		
+	'Define the buttons we want to show 
+	sButtons = "Done|Complete"
+
+	'PackStation.Init textL,textR, sButtons, "SWOG Add/Remove",sHeaders,,sHeaderWidth,true
+	Packstation.Init sTextLeftPane,sTextRightPane,sButtons,sWindowTitle, sLHeaders,"|",sLHeaderWidth, True
+	
+	Set ndlP = s.x.SelectNodes("SHIPMENT/CMS/BOL/LINE")
+	If Not ndlP is Nothing Then
+		For Each nodP in ndlP
+			Set swBOLObj = nodP.SelectSingleNode("ID")
+			If Not swBOLObj is Nothing then
+				'Code builds BOL screen from NODES (SHIPMENT/CMS/BOL/LINE). If data
+				'already exists.
+				blnBOLItemsFound = True
+
+				If iLineCount = 1 Then
+					sIDKey1    = swBOLObj.text
+					sLineText1 = nodP.SelectSingleNode("BOL_PALLETS").text & "" & "|" & _
+								 nodP.SelectSingleNode("BOL_CARTONS").text & "" & "|" & _
+								 nodP.SelectSingleNode("BOL_DESCRIPTION").text & "" & "|" & _
+								 nodP.SelectSingleNode("BOL_CLASS").text & "" & "|" & _
+								 nodP.SelectSingleNode("BOL_WEIGHT").text & "" 
+				ElseIf iLineCount = 2 Then
+					sIDKey2    = swBOLObj.text
+					sLineText2 = nodP.SelectSingleNode("BOL_PALLETS").text & "" & "|" & _
+								 nodP.SelectSingleNode("BOL_CARTONS").text & "" & "|" & _
+								 nodP.SelectSingleNode("BOL_DESCRIPTION").text & "" & "|" & _
+								 nodP.SelectSingleNode("BOL_CLASS").text & "" & "|" & _
+								 nodP.SelectSingleNode("BOL_WEIGHT").text & "" 
+				ElseIf iLineCount = 3 Then
+					sIDKey3    = swBOLObj.text
+					sLineText3 = nodP.SelectSingleNode("BOL_PALLETS").text & "" & "|" & _
+								 nodP.SelectSingleNode("BOL_CARTONS").text & "" & "|" & _
+								 nodP.SelectSingleNode("BOL_DESCRIPTION").text & "" & "|" & _
+								 nodP.SelectSingleNode("BOL_CLASS").text & "" & "|" & _
+								 nodP.SelectSingleNode("BOL_WEIGHT").text & "" 
+				ElseIf iLineCount = 4 Then
+					sIDKey4    = swBOLObj.text
+					sLineText4 = nodP.SelectSingleNode("BOL_PALLETS").text & "" & "|" & _
+								 nodP.SelectSingleNode("BOL_CARTONS").text & "" & "|" & _
+								 nodP.SelectSingleNode("BOL_DESCRIPTION").text & "" & "|" & _
+								 nodP.SelectSingleNode("BOL_CLASS").text & "" & "|" & _
+								 nodP.SelectSingleNode("BOL_WEIGHT").text & ""
+				ElseIf iLineCount = 5 Then
+					sIDKey5    = swBOLObj.text
+					sLineText5 = nodP.SelectSingleNode("BOL_PALLETS").text & "" & "|" & _
+								 nodP.SelectSingleNode("BOL_CARTONS").text & "" & "|" & _
+								 nodP.SelectSingleNode("BOL_DESCRIPTION").text & "" & "|" & _
+								 nodP.SelectSingleNode("BOL_CLASS").text & "" & "|" & _
+								 nodP.SelectSingleNode("BOL_WEIGHT").text & "" 
+				End If
+				
+				iLineCount = iLineCount + 1
+							
+			End If
+			'Code empties Object
+			Set swBOLObj = Nothing
+		Next
+		
+		If blnBOLItemsFound = True Then
+			'Code re-builds BOL screen for operator to change/add or delete
+			PackStation.AddItem sLineText5,0,0,sIDKey5,"|"
+			PackStation.AddItem sLineText4,0,0,sIDKey4,"|"
+			PackStation.AddItem sLineText3,0,0,sIDKey3,"|"
+			PackStation.AddItem sLineText2,0,0,sIDKey2,"|"
+			PackStation.AddItem sLineText1,0,0,sIDKey1,"|"
+		Else
+			'Code calls function that populates BOL screen for first time
+			Call BuildBOLScreen()
+		End If
+	End If		
+	
+	PackStation.Show False,8940,3650
+	PackStation.EnableButton 1, True
+	PackStation.SizeButtons 430,1225,8
+End Sub
+
+ 
+Sub Packstation_FunctionKey(iButton)
+	
+	Packstation.UpdateCaption "You pressed F" & iButton
+ 
+End Sub
+
+
+Sub Packstation_Button(iButton)
+	'======================================================================
+	' This Subroutine gets called each time operator clicks a button on screen. 
+	' Field Sys.UserGlobal("PackScreenType") decides if this button was clicked on BOL
+	' screen or SWOG screen.
+	'
+	' L = BOL Screen    S = SWOG Screen
+	'======================================================================	
+	Select Case iButton
+		Case Else
+			Packstation.UpdateCaption  "You clicked button " & iButton & "!"
+	End Select
+	
+	height = 430
+	witdh = 1225
+	font = 10
+	DIM PackScreenType: PackScreenType = Sys.UserGlobal("PackScreenType")
+	'msgbox "I Clicked button " & which
+	Select Case iButton
+		Case 0 '"Close"
+			PackStation.Hide
+			PackStation_Abort(PackScreenType)
+		Case 1 'Each/Swog Add
+			Select Case PackScreenType
+				Case "W"
+					'Msgbox "Hello"
+				Case "N"
+					Shipment.E("/SHIPMENT/COMMON/PACK/QTY_MODE") = "EACH"
+					PackStation.EnableButton 1, False
+					PackStation.EnableButton 2, True
+					PackStation.EnableButton 3, True
+					PackStation.SizeButtons height,witdh,font
+			End Select
+		Case 2 'Remove/ Swog Remove
+			Select Case PackScreenType
+				Case "W"
+					'Msgbox "World"
+				Case "N"
+					Shipment.E("/SHIPMENT/COMMON/PACK/SCAN_MODE") = "REMOVE"
+					PackStation.EnableButton 2, False
+					PackStation.EnableButton 3, True
+					PackStation.SizeButtons height,witdh,font
+			End Select
+		Case 3 'Add
+			Shipment.E("/SHIPMENT/COMMON/PACK/SCAN_MODE") = "ADD"
+			PackStation.EnableButton 2, True
+			PackStation.EnableButton 3, False
+			PackStation.SizeButtons height,witdh,font
+		REM Case 6 'Type
+			REM If Shipment.E("/SHIPMENT/COMMON/PACK/TEXT") = "On" Then
+				REM Shipment.E("/SHIPMENT/COMMON/PACK/TEXT") = "Off"
+				REM PackStation.SetStatusInfo ""
+			REM Else
+				REM Shipment.E("/SHIPMENT/COMMON/PACK/TEXT") = "On"
+				REM PackStation.SetStatusInfo "Enter SKU"
+			REM End If
+		Case Else
+			msgbox which
+	End Select
+
+End Sub
+
+
+Sub Packstation_Scan(sBarcode) 
+ 
+	Packstation.UpdateCaption "You scanned a barcode saying '" & sbarcode & "' !"
+	
+End Sub
+
+
+Sub Packstation_Click(sItemKey)
+	'======================================================================
+	' This Subroutine gets called each time operator clicks an item contained on screen. 
+	' Field Sys.UserGlobal("PackStation") decides if this buttoin was clicked on BOL
+	' screen or SWOG screen.
+	'
+	' L = BOL Screen  S = SWOG Screen
+	'======================================================================	  
+	
+	'Code set variables
+	DIM PackScreenType: PackScreenType = Sys.UserGlobal("PackScreenType")
+	
+	Select Case PackScreenType
+		Case "L"
+			'Code calls function that buuilds and displays LTLDetail screen
+			BuildLTLDetailScreen(sItemKey)
+	End Select
+End Sub
+
+
+Sub Packstation_Click2(ItemKey)
+ 
+	Packstation.UpdateCaption "You clicked on grid 2, column " & Packstation.LastClickColumn2 & ", on the row with key '" & ItemKey & "' !"
+ 
+End Sub
+
+
+Sub Packstation_Abort(PackScreenType)
+	'======================================================================
+	' This Subroutine gets called each time operator clicks an close screen icon. 
+	' Field Sys.UserGlobal("PackStation") decides if this button was clicked on BOL
+	' screen or SWOG screen.
+	'
+	' L = BOL Screen    S = SWOG Screen
+	'======================================================================
+ 
+	'Code sets Variables
+	sBOL = "SHIPMENT/CMS/BOL"
+	
+	Select Case PackScreenType
+		Case "L"
+			'Code calls function that adds (cartons, Pallets, Weight) from all
+			'BOL Detail lines.
+			Call GetBOLTotals()
+
+			'Code displays BOL screen to operator.
+			ShowForm "BOL",True,True
+			
+			'Updates Proship shipping charges with Freight charges from BOL screen.
+			s.e("SHIPMENT/COMMON/BASE") = s.e("SHIPMENT/CMS/BOL/CSTM_BOL_FREIGHT_CHARGE")
+			s.e("SHIPMENT/COMMON/TOTAL") = s.e("SHIPMENT/CMS/BOL/CSTM_BOL_FREIGHT_CHARGE")
+			s.e("SHIPMENT/COMMON/SPECIAL") = "0.00"	
+			s.e("SHIPMENT/COMMON/DISCOUNT") = "0.00"	
+
+			'Code re-paints screen.
+			Sys.RefreshScreen			
+	End Select
+		
+End Sub
+
+
+Sub Packstation_RHEADERCLICK()
+ 
+	Packstation.UpdateCaption "You clicked on the Right Header box."
+	
+End Sub
+
+
+Sub Packstation_LHEADERCLICK()
+ 
+	Packstation.UpdateCaption "You clicked on the Left Header box."
+ 
+End Sub
+
+
+Function BuildBOLScreen()
+	'======================================================================
+	' This function gets called from SHOWBOLSCREEN and builds all nodes and BOL
+	' screen first time it appears.
+	'======================================================================
+
+	'Code calls function that finds number of containers on a LTL shipment
+	'Call GetTotalShipmentContainers() - Code from Sandoz
+	
+	'Code builds BOL Detail Screen
+	sIDKey1 = "A1"
+	s.e("SHIPMENT/CMS/BOL/LINE/ID") = sIDKey1
+	s.e("SHIPMENT/CMS/BOL/LINE/BOL_PALLETS") = ""
+	s.e("SHIPMENT/CMS/BOL/LINE/BOL_CARTONS") = ""
+	s.e("SHIPMENT/CMS/BOL/LINE/BOL_DESCRIPTION") = ""
+	s.e("SHIPMENT/CMS/BOL/LINE/BOL_CLASS") = ""
+	s.e("SHIPMENT/CMS/BOL/LINE/BOL_WEIGHT") = ""
+
+	sLinetext1 = s.e("SHIPMENT/CMS/BOL/LINE/BOL_PALLETS") & "|" & _
+				s.e("SHIPMENT/CMS/BOL/LINE/BOL_CARTONS") & "|" & _
+				s.e("SHIPMENT/CMS/BOL/LINE/BOL_DESCRIPTION") & "|" & _
+				s.e("SHIPMENT/CMS/BOL/LINE/BOL_CLASS") & "|" & _
+				s.e("SHIPMENT/CMS/BOL/LINE/BOL_WEIGHT") 
+	
+
+	length = Shipment.X.SelectNodes("/SHIPMENT/CMS/BOL/LINE").length		
+	'BOL Lines already exist - add new
+	If length > 0 Then			
+		cLineID = Right(s.e("SHIPMENT/CMS/BOL/LINE[" & length &"]/ID"),Len(s.e("SHIPMENT/CMS/BOL/LINE[" & length &"]/ID"))-1)
+		nLineID = Cnum(cLineID) + 1
+		sIDKey2 = "A" & Cstr(nLineID)
+		
+		If s.e("SHIPMENT/CMS/BOL/LINE[1]/BOL_CLASS") = "85" Then
+			strDescription = "ITEM 58770 SUB 2 CLASS 85"
+		ElseIf s.e("SHIPMENT/CMS/BOL/LINE[1]/BOL_CLASS") = "60" Then
+			strDescription = ""
+		Else
+			strDescription = ""
+		End If
+		
+		s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/ID") = sIDKey2
+		s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_PALLETS") = ""
+		s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_CARTONS") = ""
+		s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_DESCRIPTION") = strDescription
+		s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_CLASS") = ""
+		s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_WEIGHT") = ""
+	
+		sLinetext2 = s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_PALLETS") & "|" & _
+					s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_CARTONS") & "|" & _
+					s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_DESCRIPTION") & "|" & _
+					s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_CLASS") & "|" & _
+					s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_WEIGHT") 
+	End If
+	
+	length = Shipment.X.SelectNodes("/SHIPMENT/CMS/BOL/LINE").length		
+	'BOL Lines already exist - add new
+	If length > 0 Then			
+		cLineID = Right(s.e("SHIPMENT/CMS/BOL/LINE[" & length &"]/ID"),Len(s.e("SHIPMENT/CMS/BOL/LINE[" & length &"]/ID"))-1)
+		nLineID = Cnum(cLineID) + 1
+		sIDKey3 = "A" & Cstr(nLineID)
+		s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/ID") = sIDKey3
+		s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_PALLETS") = ""
+		s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_CARTONS") = ""
+		s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_DESCRIPTION") = ""
+		s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_CLASS") = ""
+		s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_WEIGHT") = ""
+	
+		sLinetext3 = s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_PALLETS") & "|" & _
+					s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_CARTONS") & "|" & _
+					s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_DESCRIPTION") & "|" & _
+					s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_CLASS") & "|" & _
+					s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_WEIGHT") 
+	End If
+	
+	length = Shipment.X.SelectNodes("/SHIPMENT/CMS/BOL/LINE").length		
+	'BOL Lines already exist - add new
+	If length > 0 Then			
+		cLineID = Right(s.e("SHIPMENT/CMS/BOL/LINE[" & length &"]/ID"),Len(s.e("SHIPMENT/CMS/BOL/LINE[" & length &"]/ID"))-1)
+		nLineID = Cnum(cLineID) + 1
+		sIDKey4 = "A" & Cstr(nLineID)
+		s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/ID") = sIDKey4
+		s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_PALLETS") = ""
+		s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_CARTONS") = ""
+		s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_DESCRIPTION") = ""
+		s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_CLASS") = ""
+		s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_WEIGHT") = ""
+	
+		sLinetext4 = s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_PALLETS") & "|" & _
+					s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_CARTONS") & "|" & _
+					s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_DESCRIPTION") & "|" & _
+					s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_CLASS") & "|" & _
+					s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_WEIGHT") 
+	End If
+	
+	length = Shipment.X.SelectNodes("/SHIPMENT/CMS/BOL/LINE").length		
+	'BOL Lines already exist - add new
+	If length > 0 Then			
+		cLineID = Right(s.e("SHIPMENT/CMS/BOL/LINE[" & length &"]/ID"),Len(s.e("SHIPMENT/CMS/BOL/LINE[" & length &"]/ID"))-1)
+		nLineID = Cnum(cLineID) + 1
+		sIDKey5 = "A" & Cstr(nLineID)
+		s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/ID") = sIDKey5
+		s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_PALLETS") = ""
+		s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_CARTONS") = ""
+		s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_DESCRIPTION") = ""
+		s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_CLASS") = ""
+		s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_WEIGHT") = ""
+	
+		sLinetext5 = s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_PALLETS") & "|" & _
+					s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_CARTONS") & "|" & _
+					s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_DESCRIPTION") & "|" & _
+					s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_CLASS") & "|" & _
+					s.e("SHIPMENT/CMS/BOL/LINE[" & nLineID & "]/BOL_WEIGHT") 
+		
+		PackStation.AddItem sLinetext5,0,0,sIDKey5,"|"
+		PackStation.AddItem sLinetext4,0,0,sIDKey4,"|"
+		PackStation.AddItem sLinetext3,0,0,sIDKey3,"|"
+		PackStation.AddItem sLinetext2,0,0,sIDKey2,"|"
+		PackStation.AddItem sLinetext1,0,0,sIDKey1,"|"
+	End If
+End Function
+
+
+Function BuildLTLDetailScreen(sItemKey)
+	'======================================================================
+	' This function gets called from Packstation_Click and builds all nodes and LTLDetail
+	' screen for operator to update.
+	'======================================================================
+
+	'Code sets Variables
+	sBOL = "SHIPMENT/CMS/BOL"
+
+	'Code gets index from line on screen that operator clicked and populates temporary screen for users to change.
+	s.e(sBOL & "/CSTM_SCREEN_KEYID") 		   = s.e(sBOL & "/LINE[ID='" & sItemKey & "']/ID")
+	s.e(sBOL & "/CSTM_SCREEN_COMMODITY_CLASS") = s.e(sBOL & "/LINE[ID='" & sItemKey & "']/BOL_CLASS")
+	s.e(sBOL & "/CSTM_SCREEN_DESCRIPTION")     = s.e(sBOL & "/LINE[ID='" & sItemKey & "']/BOL_DESCRIPTION")
+	s.e(sBOL & "/CSTM_SCREEN_PALLETS")         = s.e(sBOL & "/LINE[ID='" & sItemKey & "']/BOL_PALLETS")
+	s.e(sBOL & "/CSTM_SCREEN_CARTONS")         = s.e(sBOL & "/LINE[ID='" & sItemKey & "']/BOL_CARTONS")
+	s.e(sBOL & "/CSTM_SCREEN_WEIGHT")          = s.e(sBOL & "/LINE[ID='" & sItemKey & "']/BOL_WEIGHT")
+	
+	'Code calls function that pre-populates LTLDETAIL screen with default CommodityID 
+	If Trim(s.e(sBOL & "/CSTM_SCREEN_COMMODITY_CLASS")) = "" Then
+		Call LookupLTLCommodityDefault()
+	End If
+
+	'Code shows screen to enter BOL detail information
+	ShowForm "LTLDETAIL",True,True,,,"DONE"
+
+	'Codes takes data from screen and re-populates BOL detail line nodes
+	s.e(sBOL & "/LINE[ID='" & sItemKey & "']/ID")              = s.e(sBOL & "/CSTM_SCREEN_KEYID") 
+	s.e(sBOL & "/LINE[ID='" & sItemKey & "']/BOL_CLASS")       = s.e(sBOL & "/CSTM_SCREEN_COMMODITY_CLASS")
+	s.e(sBOL & "/LINE[ID='" & sItemKey & "']/BOL_DESCRIPTION") = s.e(sBOL & "/CSTM_SCREEN_DESCRIPTION")
+	s.e(sBOL & "/LINE[ID='" & sItemKey & "']/BOL_PALLETS")     = s.e(sBOL & "/CSTM_SCREEN_PALLETS")
+	s.e(sBOL & "/LINE[ID='" & sItemKey & "']/BOL_CARTONS")     = s.e(sBOL & "/CSTM_SCREEN_CARTONS")
+	s.e(sBOL & "/LINE[ID='" & sItemKey & "']/BOL_WEIGHT")      = s.e(sBOL & "/CSTM_SCREEN_WEIGHT")
+	
+	'Code takes data from LTL Detail Screen and re-populates BOLScreen 
+	sLineText = s.e(sBOL & "/CSTM_SCREEN_PALLETS") & "|" & _
+				s.e(sBOL & "/CSTM_SCREEN_CARTONS") & "|" & _
+				s.e(sBOL & "/CSTM_SCREEN_DESCRIPTION") & "|" & _
+				s.e(sBOL & "/CSTM_SCREEN_COMMODITY_CLASS") & "|" & _
+				s.e(sBOL & "/CSTM_SCREEN_WEIGHT")
+				
+	sIDKey = s.e(sBOL & "/CSTM_SCREEN_KEYID") 
+	PackStation.UpdateItem sIDKey,sLineText,0,0,,"|"
+
+End Function

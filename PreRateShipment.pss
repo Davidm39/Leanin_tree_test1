@@ -1,0 +1,92 @@
+Sub PreRateShipment()
+	'========================================================================
+	' Subroutine runs each time operator presses F9 or each time we execute
+	' s.rate command.
+	'========================================================================
+	
+	'Code calls function that handles customer rules.
+	Call CustomerPreRateShipment()
+  
+	'Code checks for shipment going to Canada and using FedEx Ground. If so then
+	'we change Admissibility package type because of a problem in FedEx software.
+	If s.e("SHIPMENT/COMMON/CONSIGNEE_COUNTRY") = "CA" Then
+		If Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.CAFE.GND" _
+			Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.CAFE.HDL" _
+			Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.FXRS.PRI" _
+			Or Trim(s.e("SHIPMENT/SERVICE")) = "BWTI_FXRS.FXRS.2DA" Then
+			Shipment.E("//SHIPMENT/COMMON/ADMISSIBILITY_PACKAGE_TYPE") = "BOX"
+		End If
+	End If  
+	
+	'Code checks for shipment going to Canada and using UPS. If customer is using
+	'state "PQ" which is valid for FedEx. We need to change state to "QC" for
+	'UPS Shipments.
+	If s.e("SHIPMENT/COMMON/CONSIGNEE_COUNTRY") = "CA" Then
+		If Left(Trim(s.e("SHIPMENT/SERVICE")),12) = "BWTI_UPS.UPS" _
+			And Trim(s.e("SHIPMENT/COMMON/CONSIGNEE_STATE")) = "PQ"Then		
+			s.e("SHIPMENT/COMMON/CONSIGNEE_STATE") = "QC"
+			Sys.RefreshScreen
+		End If
+	End If
+  
+	'Calls function to get box dimension and weight from BoxDimension table.
+	'Only if BoxType contains a value.
+	CurrentBox = Shipment.CP
+	If Shipment.E("/SHIPMENT/PACKAGE[" & CurrentBox & "]/CSTM_BOXTYPE") <> "" Then 
+		BoxType = Shipment.E("/SHIPMENT/PACKAGE[" & CurrentBox & "]/CSTM_BOXTYPE")
+		
+		'Depending on value contained in UseBoxDimensionTable field. Code calls function to Lookup Box Type  
+		'from CSTM(BoxDimensions) table, customer supplied BoxDimensions table or does nothing.
+		Select Case Trim(Sys.UserGlobal("UseBoxDimensionTable"))
+			Case "0"
+				'Do nothing as customer isn't using Box Type to get Dimensions
+			Case "1"
+				'Code calls function from User_scripts to find box diminsion from CSTM(BoxDimensions) Table
+				Call LookupBoxType(BoxType, CurrentBox)
+			Case "2"
+				'Code calls functions to find box information from customer supplied BoxDimensions) Table
+				Call CustomerLookupBoxType(BoxType, CurrentBox)
+		End Select
+
+		Sys.RefreshScreen
+	End If
+	
+	'Code checks for missing or invalid Carrier account number and displays error message
+	'if account number is missing or invald
+	If Trim(s.e("SHIPMENT/COMMON/TERMS")) <> "SHIPPER" Then
+		Call ValidateCarrierAccountInformation(OkToContinue)
+		If OkToContinue = False Then
+			SetFocus "/SHIPMENT/COMMON/CONSIGNEE_ACCOUNT"
+			Exit Sub
+		End If
+	End If
+	
+
+	'Code Re-Rates shipment after changing service on screen and manual shipment
+	If UCase(trim(s.e("SHIPMENT/COMMON/CSTM_INTERFACE"))) = "MANUAL" Then 
+		
+		'Code read system setup XML to figure out if Proship client has a scale configured
+		If SYS.ElementExists("SYSTEM/CONFIG/SCALE/SYMBOL") > 0 Then
+			If SYS.E("SYSTEM/CONFIG/SCALE/SYMBOL") <> "" Then
+			
+				OkToRateShipment = True
+			
+				'Gets weight from scale
+				s.e("SHIPMENT/PACKAGE/WEIGHT")= S.Weigh	
+				
+				'Calls function to get weight from scale
+				Call GetWeight(OkToRateShipment)
+
+				'Code set cursor to weight on screen if couldn't rate shipment
+				If OkToRateShipment = False Then
+					S.E("SHIPMENT/PACKAGE/WEIGHT") = ""
+					SetFocus "/SHIPMENT/PACKAGE/WEIGHT"
+				Else
+					Sys.RefreshScreen
+				End If			
+			End If
+		End If		
+	End If
+
+	
+End Sub

@@ -1,0 +1,293 @@
+Sub UpdateHistory(OkToContinue)
+	'=========================================================================
+	' This subroutine gets called from PostShipShipment routine and adds shipment
+	'records to our custom history table.
+	'=========================================================================
+	
+	'Fields below are used as extra text and decimals fields in CSTM(History) file.
+	strUserText1 = s.e("SHIPMENT/CMS/CSTM_USERTEXT1") ' typically PCmachine name
+	strUserText2 = s.e("SHIPMENT/CMS/CSTM_USERTEXT2") 
+	strUserText3 = s.e("SHIPMENT/CMS/CSTM_USERTEXT3") 
+	strUserText4 = s.e("SHIPMENT/CMS/CSTM_USERTEXT4")
+	strUserText5 = s.e("SHIPMENT/CMS/CSTM_USERTEXT5")
+	
+	intUserNumber1 = CNum(s.e("SHIPMENT/CMS/CSTM_USERNUMBER1"))
+	intUserNumber2 = CNum(s.e("SHIPMENT/CMS/CSTM_USERNUMBER2"))
+	intUserNumber3 = CNum(s.e("SHIPMENT/CMS/CSTM_USERNUMBER3"))
+	intUserNumber4 = CNum(s.e("SHIPMENT/CMS/CSTM_USERNUMBER4"))
+	intUserNumber5 = CNum(s.e("SHIPMENT/CMS/CSTM_USERNUMBER5"))
+	
+	'Code calls function to get zip code of shipper being used in this shipment.
+	CurrentShipper = Trim(s.e("SHIPMENT/COMMON/SHIPPER"))
+	OriginZip = ""
+	Call FindOriginZip (CurrentShipper, OriginZip)
+
+	'Checks for Consignee Residential flag set on.
+	If Trim(s.e("SHIPMENT/COMMON/CONSIGNEE_RESIDENTIAL")) = "True" Then
+		ResidentialFlag = "Y"
+	Else
+		ResidentialFlag = "N"
+	End If
+	
+	'Checks for Saturday Delivery flag set on.	
+	If Trim(Shipment.E("/SHIPMENT/COMMON/SATURDAY_DELIVERY")) = "True" then
+		SaturdayFlag = "Y"
+	else
+		SaturdayFlag = "N"
+	End If
+	
+	'Checks for hazardous flag set on.	
+	If CNum(Shipment.E("/SHIPMENT/COMMON/HAZMAT_FEE")) >  0 then
+		HazardFlag = "Y"
+	else
+		HazardFlag = "N"
+	End If
+	
+	'Code calls function to parse out carrier and service from Proship service field.
+	ProShipCarrier = s.e("SHIPMENT/SERVICE")
+	Call ParseCarrierAndService (ProShipCarrier, CarrierName, CarrierService)	
+
+	'Code coverts ProShip Carrier FXRS and CAFE to FEDEX in CSTM(History) Table.
+	If UCase(Trim(CarrierName)) = "FXRS" _
+		Or UCase(Trim(CarrierName)) = "CAFE" Then
+		CarrierName = "FEDEX"
+	End If
+	
+	'Code calls function that formats date & time into correct format for ship date
+	PackageShipmentDate = CElse(date(),"yyyy-mm-dd")
+	Call FormatShipmentDateTime(PackageShipmentDate, PackageShipmentDateTime)
+		
+	'Code calls function that formats date & time into correct format for manifest date
+	PackageManifestDate = CElse(s.e("SHIPMENT/COMMON/SHIPDATE"),"yyyy-mm-dd")
+	Call FormatManifestDateTime(PackageManifestDate, PackageManifestDateTime)
+	
+	'Code plugs total boxes on shipment into a node that can be displayed on history screen.
+	S.E("SHIPMENT/CMS/CSTM_TOTAL_BOXES") = Shipment.TP
+	
+	'Code calculates expected delivery date/time
+	newCmtDate = ""
+	newCmtTime = ""
+	mandate = PackageManifestDate
+	cmttime = CNUM(Shipment.E("/SHIPMENT/CMS/CSTM_COMMITMENT_TIME"))
+	If cmttime > 0 And cmttime < 30000 Then 
+		Call CalculateDeliveryCommitment(cmttime, mandate, SaturdayFlag, newCmtDate, newCmtTime)
+	End If
+	
+	'Code sets SWOG flag to 'Y' if this shipments has SWOG items
+	If S.E("SHIPMENT/CMS/SWOG/DELIVERY") <> "" Then
+		strSwogFlag = "Y" 
+	Else
+		strSwogFlag = "N"
+	End If
+	
+	
+	'Begin building insert statement	
+	For Package = 1 to Shipment.TP	
+	
+		'Added - 03-29-2010 Code checks for USPS Delivery Conformation tracking number 
+		'on UPS Basic and UPS SurePost Shipments. If exits then store tracking number 
+		'in field AdditionalTrackingNumber in CSTM(History) table
+		If Trim(Shipment.E("SHIPMENT/SERVICE")) = "BWTI_UPS.UPS.B" _
+			Or Trim(Shipment.E("SHIPMENT/SERVICE")) = "BWTI_UPS.UPS.SPP" Then
+			iFieldExists = Shipment.ElementExists("SHIPMENT/PACKAGE[" & iPackage & "]/BAR_CODE_2")
+			If iFieldExists > 0 Then
+				strAdditionalTrackingNumber = Trim(Shipment.E("SHIPMENT/PACKAGE[" & iPackage & "]/BAR_CODE_2"))
+			Else
+				strAdditionalTrackingNumber = ""
+			End if
+		Else
+			strAdditionalTrackingNumber = ""
+		End If
+		
+		Query = "Insert into history set "
+
+		myField = CTrim(s.e("SHIPMENT/COMMON/SHIPPER_REFERENCE"),50)
+		call fixfield(myField)
+		Query = Query & "PackageId= '" & myField & "', "   'PackageID 
+
+		myField = Trim(s.e("SHIPMENT/CMS/CSTM_SALES_ORDER"))
+		call fixfield(myField)
+		Query = Query & "Invoicenumber= '" & myField & "', "		'Invoice Number
+
+		Query = Query & "OriginZip = '" & OriginZip & "', "	
+		Query = Query & "OriginCompany = '" & S.E("/SHIPMENT/COMMON/RETURN_ADDRESS_COMPANY") & "', "
+		Query = Query & "Shipper = '" & CTrim(s.e("SHIPMENT/COMMON/SHIPPER"),50) & "', "	
+		Query = Query & "ConsigneeNumber = '" & CTrim(s.e("SHIPMENT/COMMON/CONSIGNEE_CODE"),50) & "'," 
+
+		MyField = CTrim(s.e("SHIPMENT/COMMON/CONSIGNEE_COMPANY"),50)
+		Call FixField(MyField)
+		Query = Query & "ConsigneeCompany = '" & MyField & "',"  
+		
+		MyField = CTrim(s.e("SHIPMENT/COMMON/CONSIGNEE_CONTACT"),50)
+		Call FixField(MyField)
+		Query = Query & "ConsigneeContact = '" & MyField & "'," 
+
+		MyField = CTrim(s.e("SHIPMENT/COMMON/CONSIGNEE_ADDRESS1"),50)
+		Call FixField(MyField)
+		Query = Query & "ConsigneeAddress1= '" & MyField & "'," 
+
+		MyField = CTrim(s.e("SHIPMENT/COMMON/CONSIGNEE_ADDRESS2"),50)
+		Call FixField(MyField)
+		Query = Query & "ConsigneeAddress2= '" & MyField & "'," 
+		
+		MyField = CTrim(s.e("SHIPMENT/COMMON/CONSIGNEE_ADDRESS3"),50)
+		Call FixField(MyField)
+		Query = Query & "ConsigneeAddress3= '" & MyField & "',"  
+		
+		MyField = CTrim(s.e("SHIPMENT/COMMON/CONSIGNEE_CITY"),50)
+		Call FixField(MyField)
+		Query = Query & "ConsigneeCity = '" & MyField & "',"
+		
+		Query = Query & "ConsigneeState = '" & CTrim(s.e("SHIPMENT/COMMON/CONSIGNEE_STATE"),20) & "',"   
+		Query = Query & "ConsigneeZip = '" & CTrim(s.e("SHIPMENT/COMMON/CONSIGNEE_POSTALCODE"),15) & "',"   
+		
+		myField = CTrim(s.e("SHIPMENT/COMMON/CONSIGNEE_PHONE"),20)
+		call fixfield(myField)
+		Query = Query & "ConsigneePhone = '" & myField & "',"   
+		
+		Query = Query & "CountryCode = '" & CTrim(s.e("SHIPMENT/COMMON/CONSIGNEE_COUNTRY"),10)  & "', "	
+		Query = Query & "ConsigneeBillTo = ' ', "  
+		Query = Query & "ProshipCarrier ='" & CTrim(s.e("SHIPMENT/SERVICE"),30) & "', "   
+		Query = Query & "CustomerShipMethodIn = '" & Trim(s.e("SHIPMENT/CMS/CSTM_CUSTOMER_SHIPMETHOD_IN")) & "', "  
+		Query = Query & "CustomerShipMethodOut ='" & Trim(s.e("SHIPMENT/CMS/CSTM_CUSTOMER_SHIPMETHOD_OUT")) & "', "	
+		Query = Query & "Carrier ='" & CTrim(Carriername,10)  & "', "	
+		Query = Query & "Class ='" & CTrim(CarrierService,10)  & "', "		
+		Query = Query & "Operator =  '" & CTrim(s.e("SHIPMENT/CMS/CSTM_SHIPPERID"),20) & "',"  
+		Query = Query & "Picker = '" & CTrim(s.e("SHIPMENT/CMS/CSTM_PICKER"),20) & "',"   
+		Query = Query & "Packer = '" & CTrim(s.e("SHIPMENT/CMS/CSTM_PACKER"),20) & "',"   	
+		Query = Query & "PSVoidID =  '" & CTrim(s.e("SHIPMENT/PACKAGE[1]/PS_VOID_ID"),50) & "', "	
+		Query = Query & "MAXBOX = " & SHIPMENT.TP & ", "
+		Query = Query & "CURBOX =  " & Package & ", "
+		Query = Query & "Residential = '" & Trim(ResidentialFlag)  & "', "	
+		Query = Query & "Zone = '" & CTrim(s.e("SHIPMENT/COMMON/ZONE"),10) & "', "	
+		Query = Query & "BilledWeight = " & CNum(s.e("SHIPMENT/COMMON/BILLED_WEIGHT")) & ", "	
+		Query = Query & "ActualWeight = " & CNum(s.e("SHIPMENT/PACKAGE[" & Package & "]/WEIGHT")) & ", "	
+		Query = Query & "TrackingNumber = '" & CTrim(s.e("SHIPMENT/PACKAGE[" & Package & "]/TRACKING_NUMBER"),50) & "', "  
+		Query = Query & "ShipDate = '" & PackageShipmentDateTime & "', " 
+		Query = Query & "ManifestDate = '" & PackageManifestDateTime	& "', "	
+		Query = Query & "FuelSurcharge = " & CNum(s.e("SHIPMENT/COMMON/FUEL_SURCHARGE")) & ", " 	
+		Query = Query & "BaseCharge = " & CNum(s.e("SHIPMENT/COMMON/BASE")) & ", "
+		Query = Query & "CodAmount = " & CNum(s.e("SHIPMENT/PACKAGE[" & Package  & "]/COD_AMOUNT")) & ", " 
+		Query = Query & "CodFee = " & CNum(s.e("SHIPMENT/COMMON/COD_FEE")) & ", "  
+		Query = Query & "CODPaymentMethod = '" & CTrim(s.e("SHIPMENT/PACKAGE[" & Package & "]/COD_PAYMENT_METHOD"),50) & "', "
+		Query = Query & "TotalCharge  = " & CNum(s.e("SHIPMENT/COMMON/TOTAL")) & ", "	
+				
+		myField = CTrim(Shipment.E("/SHIPMENT/CMS/CSTM_PO_NUMBER"),50)
+		call fixfield(myField)
+		Query = Query & "PONumber  = '" & myField & "', " 
+		
+		myField = CTrim(s.e("SHIPMENT/COMMON/SHIPPER_REFERENCE"),30)
+		call fixfield(myField)
+		Query = Query & "PLDReference1 = '" & myField & "', "	
+			
+		myField = CTrim(s.e("SHIPMENT/COMMON/MISC_REFERENCE_2"),50) 
+		call fixfield(myField)
+		Query = Query & "PLDReference2 =  '" & myField & "', "	  
+
+		myField = CTrim(s.e("SHIPMENT/COMMON/TPBILL_COMPANY"),40)
+		call fixfield(myField)
+		Query = Query & "TPBCompany = '" & myField & "', "	
+
+		myField = CTrim(s.e("SHIPMENT/COMMON/TPBILL_CONTACT"), 40)
+		call fixfield(myField)
+		Query = Query & "TPBContact = '" & myField & "', "	
+
+		myField = CTrim(s.e("SHIPMENT/COMMON/TPBILL_ADDRESS1"), 40)
+		call fixfield(myField)
+		Query = Query & "TPBAddress = '" & myField & "', "		
+
+		myField = CTrim(s.e("SHIPMENT/COMMON/TPBILL_ADDRESS2"), 40)
+		call fixfield(myField)
+		Query = Query & "TPBAddress2 = '" & myField & "', "					
+
+		myField = CTrim(s.e("SHIPMENT/COMMON/TPBILL_CITY"),25)
+		call fixfield(myField)
+		Query = Query & "TPBCity = '" & myField & "', "		
+
+		myField = CTrim(s.e("SHIPMENT/COMMON/TPBILL_STATE"), 20)
+		call fixfield(myField)
+		Query = Query & "TPBState = '" & myField  & "', "			
+
+		myField = CTrim(s.e("SHIPMENT/COMMON/TPBILL_POSTALCODE"), 20)
+		call fixfield(myField)
+		Query = Query & "TPBZip = '" & myField & "', "	
+
+		myField = Trim(s.e("SHIPMENT/COMMON/TPBILL_PHONE"))
+		call fixfield(myField)
+		Query = Query & "TPBPhone = '" & myField & "', "				
+		
+		myField = CTrim(s.e("SHIPMENT/CMS/CSTM_DEPARTMENT"), 25)
+		call fixfield(myField)
+		Query = Query & "Department = '" & myField & "', "
+		
+		Query = Query & "InsuranceAmount = " & CNum(s.e("SHIPMENT/PACKAGE[" & Package  & "]/DECLARED_VALUE_AMOUNT")) & ", " 
+		Query = Query & "InsuranceFee = " & CNum(s.e("SHIPMENT/PACKAGE[" & Package  & "]/DECLARED_VALUE_FEE")) & ", " 	
+		Query = Query & "Discount = " &  CNum(s.e("SHIPMENT/COMMON/DISCOUNT")) & ", "	
+		Query = Query & "OversizeFee = " & CNum(s.e("SHIPMENT/COMMON/OVERSIZE_FEE")) & ", " 
+		Query = Query & "HazardFee = " & Cnum(s.e("SHIPMENT/COMMON/HAZMAT_FEE")) & ", "	
+		Query = Query & "BoxType = '" & Trim(s.e("SHIPMENT/PACKAGE[" & Package & "]/CSTM_BOXTYPE")) & "', " 	
+		Query = Query & "Dimensions =  '" & CTrim(s.e("SHIPMENT/PACKAGE[" & Package & "]/DIMENSION"),20) & "', "	
+		Query = Query & "PackageType = '" & CTrim(s.e("SHIPMENT/PACKAGE[" & Package & "]/PACKAGING"),25) & "', "	
+		Query = Query & "PaymentType =  '" & CTrim(s.e("SHIPMENT/COMMON/TERMS"),25) & "', "
+		Query = Query & "AddlhandlingFee =  " & Cnum(s.e("SHIPMENT/PACKAGE[" & Package & "]/ADDITIONAL_HANDLING_FEE")) & ","	
+		Query = Query & "ExtendedAreaFee = " & Cnum(s.e("SHIPMENT/COMMON/EXTENDED_AREA_FEE")) & ", "	
+		Query = Query & "Special = " & Cnum(s.e("SHIPMENT/COMMON/SPECIAL")) & ", "	
+		Query = Query & "Interface = '" & Trim(s.e("SHIPMENT/CMS/CSTM_INTERFACE")) & "', "
+		Query = Query & "AddressValidated = '" & Trim(s.e("SHIPMENT/CMS/CSTM_ADDRESSVALIDATED")) & "', "	
+		Query = Query & "ConsigneeEmail1 = '" & CTrim(s.e("SHIPMENT/PACKAGE[" & Package & "]/NOTIFICATION_EMAIL_TO1"),50) & "', "	
+		Query = Query & "Email1Mode = '" & Trim(s.e("SHIPMENT/PACKAGE[" & Package & "]/NOTIFICATION_EVENT_TYPE")) & "', "
+		Query = Query & "ConsigneeEmail2 =  '" & CTrim(s.e("SHIPMENT/PACKAGE[" & Package & "]/NOTIFICATION_EMAIL_TO2"), 50) & "', "	
+		Query = Query & "ConsigneeEmail3 = '" & CTrim(s.e("SHIPMENT/PACKAGE[" & Package & "]/NOTIFICATION_EMAIL_TO3"), 50) & "', "
+		Query = Query & "ConsigneeEmail4 = '" & CTrim(s.e("SHIPMENT/PACKAGE[" & Package & "]/NOTIFICATION_EMAIL_TO4"), 50) & "', "	
+		Query = Query & "ConsigneeEmail5 = '" & CTrim(s.e("SHIPMENT/PACKAGE[" & Package & "]/NOTIFICATION_EMAIL_TO5"), 50) & "', "	 
+		Query = Query & "TPBAccountNumber = '" & Trim(s.e("SHIPMENT/COMMON/CONSIGNEE_ACCOUNT")) & "', "	
+
+		Query = Query & "PS_CommitmentTime = '" & Trim(s.e("SHIPMENT/CMS/CSTM_COMMITMENT_TIME")) & "', "	
+
+		If newCmtDate <> "" Then 
+			Query = Query & "CommitmentDeliveryDate = '" & newCmtDate & " ', "
+			Query = Query & "CommitmentDeliveryTime = '" & newCmtTime & " ', "	
+		End If
+
+		myField = Trim(s.e("SHIPMENT/COMMON/TPBILL_PHONE"))
+		call fixfield(myField)
+		
+		Query = Query & "UserText1 = '" & Trim(strUserText1) & "', "	
+		Query = Query & "UserText2 = '" & Trim(strUserText2) & "', "
+		Query = Query & "UserText3 = '" & Trim(strUserText3) & "', "
+		Query = Query & "Usertext4 = '" & Trim(strUserText4) & "', "
+		Query = Query & "UserText5 = '" & Trim(strUserText5) & "', "	
+		Query = Query & "UserNumber1 = " & intUserNumber1 & ", "
+		Query = Query & "UserNumber2 = " & intUserNumber2 & ", "
+		Query = Query & "UserNumber3 = " & intUserNumber3 & ", "
+		Query = Query & "UserNumber4 = " & intUserNumber4 & ", "
+		Query = Query & "UserNumber5 = " & intUserNumber5 & ", "
+		Query = Query & "SaturdayFlag = '" & SaturdayFlag & "', "	
+		Query = Query & "HazardFlag = '" & HazardFlag & "', "	
+		Query = Query & "SwogFlag = '" & strSwogFlag & "' "	
+		Query = Query & ""
+
+		'Code calls function that logs information in Database CSTM table Transactionlog
+		strText = Query
+		strPackageID  = s.e("/SHIPMENT/COMMON/SHIPPER_REFERENCE")
+		strFunctionname = "UpdateHistory.pss"
+		StrMessage = "Inserting Package to History"
+		Call AddLogTransaction(StrText, StrFunctionName, StrMessage, strPackageID)			
+	
+		Set rsHistory = pCN.Execute(Query,RecordsAffected)
+
+		'Displays error message if shipment wasn't INSERTED in CSTM(History) table
+		If RecordsAffected < 1 Then
+			OkToContinue = False
+			strErrorMessage = "Shipment " & UCASE(strDeliveryID) & " WAS NOT written to CSTM History table" & vbCrLF & _
+							  "Please VOID shipment and re-ship. If problem persists," & vbCrLf & _
+							  "report problem to your IT department"
+			strWindowName = "Updatehistory"
+			strWindowButtons = vbCritical + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName		
+		End If			
+	Next
+
+	'Code empties RecordSet
+	Set rsHistory = Nothing
+End Sub

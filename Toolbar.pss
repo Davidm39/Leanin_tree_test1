@@ -1,0 +1,62 @@
+Sub Toolbar(WhichOne)
+	Select Case WhichOne
+		Case "tbAddtlHandling"
+			If Shipment.E("/SHIPMENT/PACKAGE/ADDITIONAL_HANDLING") = "True" then
+				Shipment.E("/SHIPMENT/PACKAGE/ADDITIONAL_HANDLING") = "False"
+				SBNote "Additional Handling Charge Removed."
+			Else
+				Shipment.E("/SHIPMENT/PACKAGE/ADDITIONAL_HANDLING") = "True"
+				SBNote "Additional Handling Charge Added."
+			End If
+		Case "tbSatDel"
+			If Shipment.E("/SHIPMENT/PACKAGE/SATURDAY_DELIVERY") = "True" then
+				Shipment.E("/SHIPMENT/PACKAGE/SATURDAY_DELIVERY") = "False"
+				SBNote "Saturday Delivery Charge Removed."
+			Else
+				Shipment.E("/SHIPMENT/PACKAGE/SATURDAY_DELIVERY") = "True"
+				SBNote "Saturday Delivery Charge Added."
+			End If
+		Case "tbOversize"
+			If Shipment.E("/SHIPMENT/PACKAGE/OVERSIZE") = "True" then
+				Shipment.E("/SHIPMENT/PACKAGE/OVERSIZE") = "False"
+				SBNote "Package is not oversize"
+			Else
+				Shipment.E("/SHIPMENT/PACKAGE/OVERSIZE") = "True"
+				SBNote "Package is oversize"
+			End If
+		Case "tbSigReq"
+			If Shipment.E("/SHIPMENT/PACKAGE/PROOF_REQUIRE_SIGNATURE") = "True" then
+				Shipment.E("/SHIPMENT/PACKAGE/PROOF_REQUIRE_SIGNATURE") = "False"
+				SBNote "Package can be left at destination without signature"
+			Else
+				Shipment.E("/SHIPMENT/PACKAGE/PROOF_REQUIRE_SIGNATURE") = "True"
+				SBNote "Package will require signature at delivery"
+			End If
+		Case "tbAdultSigReq"
+			If Shipment.E("/SHIPMENT/PACKAGE/PROOF_REQUIRE_SIGNATURE_ADULT") = "True" then
+				Shipment.E("/SHIPMENT/PACKAGE/PROOF_REQUIRE_SIGNATURE_ADULT") = "False"
+				SBNote "Package does not require adult signature"
+			Else
+				Shipment.E("/SHIPMENT/PACKAGE/PROOF_REQUIRE_SIGNATURE_ADULT") = "True"
+				SBNote "Package will require adult signature"
+			End If
+		Case "tbResidential"
+			If Shipment.E("/SHIPMENT/COMMON/CONSIGNEE_RESIDENTIAL") = "True" then
+				Shipment.E("/SHIPMENT/COMMON/CONSIGNEE_RESIDENTIAL") = "False"
+				SBNote "Shipment is to a commercial address"
+			Else
+				Shipment.E("/SHIPMENT/COMMON/CONSIGNEE_RESIDENTIAL") = "True"
+				SBNote "Shipment is to a residential address"
+			End If
+		Case "tbMisc1"
+			EmailThis
+		Case "tbIntlInfo"
+			ShowForm "CI", true, true
+		Case "tbMisc5"
+			ShowPackStation
+		Case "tbMisc7"
+			ShowForm "SPSERVICE", true, true
+		Case Else
+			SBNote WhichOne &  " not handled"
+	End Select
+End Sub

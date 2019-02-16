@@ -1,0 +1,300 @@
+Function FieldChange(FieldName, FieldText)
+	Select Case FieldName
+
+		Case "CSTM_BUTTON1"
+			ShowForm "SPSERVICE",True,True
+			'Code re-rates shipment and diplays new charges if weight field
+			'isn't empty.
+			If CNum(s.e("SHIPMENT/PACKAGE/WEIGHT")) > 0 Then
+				Shipment.Rate
+			End If
+			Sys.RefreshScreen
+			Sys.UserGlobal("SPECIALSERVICESFLAG") = "True"
+		
+		Case "CSTM_BUTTON2"
+			'Code displays third party billing screen.
+			ShowForm "THIRDPARTY",True,True
+			
+		Case "CSTM_BUTTON3"
+			'Code displays bill of lading screen.			
+			Call ShowBOLScreen()
+				
+			'Writes package weight to billed weight when shipping LTL or MR. so we pass back
+			'same field to customers system.
+			S.E("SHIPMENT/COMMON/BILLED_WEIGHT") = s.e("SHIPMENT/CMS/BOL/CSTM_BOL_TOTAL_WEIGHT") 
+			S.E("SHIPMENT/PACKAGE[1]/WEIGHT") = s.e("SHIPMENT/CMS/BOL/CSTM_BOL_TOTAL_WEIGHT") 
+
+			'Updates Proship shipping charges with Freight charges from BOL screen.
+			s.e("SHIPMENT/COMMON/BASE") = s.e("SHIPMENT/CMS/BOL/CSTM_BOL_FREIGHT_CHARGE")
+			s.e("SHIPMENT/COMMON/TOTAL") = s.e("SHIPMENT/CMS/BOL/CSTM_BOL_FREIGHT_CHARGE")
+			s.e("SHIPMENT/COMMON/SPECIAL") = "0.00"	
+			s.e("SHIPMENT/COMMON/DISCOUNT") = "0.00"	
+
+			'Code calls function to find address is operator picked Freight Forwarder code from
+			'BOL Screen.
+			If Trim(S.E("SHIPMENT/CMS/BOL/CSTM_BOL_FREIGHT_FORWARDER_ID")) <> "" Then
+				Call LookupFreightForwarder()
+			End If
+			
+			'Code re-paints screen.
+			Sys.RefreshScreen
+			
+		Case "CSTM_BUTTON4"
+			'Code displays screen to gather Ship with other Deliveries
+			'Clear variables.
+			strDeliveryID = ""
+			strDeliveryList = ""
+			
+			'Comment out this code if you want to use SWOG functionality
+			strErrorMessage = "This Button has been disabled"
+			strWindowName = "Ship with Other Deliveries - FieldChange"
+			strWindowButtons = vbInformation + vbOkOnly
+			MsgBox strErrorMessage,strWindowButtons,strWindowName			
+			Exit Function
+			
+			'Code sets up Input Box
+			strTitle = "Scan/Enter Ship with Deliveries"
+			strSreenMessage = "Previous Deliveries Scanned" & vbCrLF 
+			strWindowMessage = strSreenMessage
+			strDefaultValue = ""  
+			
+			blnExitInputBox = True
+			intDeliveryCount = 1
+
+			'Code calls function that logs information in Databse CSTM table Transactionlog
+			strText = ""
+			strPackageID  = s.e("/SHIPMENT/COMMON/SHIPPER_REFERENCE")
+			strFunctionname = "FieldChange.pss"
+			StrMessage = "Start Scanning SWOG Deliveries"
+			Call AddLogTransaction(StrText, StrFunctionName, StrMessage, strPackageID)				
+			
+			'Code display input box until operator clicks Cancel button
+			Do While blnExitInputBox = True
+				blnSWOGFlag = True
+				strDeliveryID = InputBox(strWindowMessage, strTitle, strDefaultValue)
+				intDeliveryCount = intDeliveryCount + 1
+				
+				'If user has clicked Cancel, then exit loop
+				If strDeliveryID = "" Then
+					blnExitInputBox = False
+
+				Else				
+					'Code calls function that logs information in Databse CSTM table Transactionlog
+					strText = ""
+					strPackageID  = s.e("/SHIPMENT/COMMON/SHIPPER_REFERENCE")
+					strFunctionname = "FieldChange.pss"
+					StrMessage = "Scanned SWOG Delivery  " & Trim(strDeliveryID)
+					Call AddLogTransaction(StrText, StrFunctionName, StrMessage, strPackageID)							
+
+					OkToContinue = True
+		
+					If OkToContinue = True Then
+						'Code adds vbCrLf to end of deliveryId when display line ids full
+						If intDeliveryCount = 5 _
+						   Or intDeliveryCount = 10 _
+						   Or intDeliveryCount = 15 _
+						   Or intDeliveryCount = 20 Then
+							strDeliveryList = strDeliveryList & strDeliveryID & "," & vbCrLf
+						Else
+							strDeliveryList = strDeliveryList & strDeliveryID & ","
+						End If
+						strWindowMessage = strScreenMessage & strDeliveryList
+						intDeliveryCount = intDeliveryCount + 1
+					End If
+				End If
+			Loop
+	
+			S.E("SHIPMENT/CMS/SWOG/DELIVERY") = Trim(strDeliveryList)			
+			blnSWOGFlag = False	
+			
+			'Code calls function that logs information in Databse CSTM table Transactionlog
+			strText = Shipment.X.SelectSingleNode("/SHIPMENT/CMS/SWOG/DELIVERY").XML
+			strPackageID  = s.e("/SHIPMENT/COMMON/SHIPPER_REFERENCE")
+			strFunctionname = "FieldChange.pss"
+			StrMessage = "End Scanning SWOG Deliveries"
+			Call AddLogTransaction(StrText, StrFunctionName, StrMessage, strPackageID)				
+			
+		Case "/SHIPMENT/SERVICE"
+			'Code Re-Rates shipment after changing service on screen if then is a
+			'valid weight
+			If CNum(Shipment.E("SHIPMENT/PACKAGE/WEIGHT")) > 0 Then
+				Shipment.Rate
+				Sys.RefreshScreen
+			End If
+
+		Case "/SHIPMENT/COMMON/SHIPPER_REFERENCE"
+			'Retieves Order information if Sales Orderd entered is a numeric value and
+			'field Shipper Reference has validation flag turned on.
+			If IsNumeric(s.e("SHIPMENT/COMMON/SHIPPER_REFERENCE")) Then
+				Shipment.Load
+			End If
+			
+		Case "/SHIPMENT/PACKAGE/CSTM_BOXTYPE"
+			'Calls function to get box dimension and weight from BoxDimension table.
+			'Only if BoxType for current package contains a value.
+			CurrentBox = Shipment.CP
+			If s.e("/SHIPMENT/PACKAGE[" & CurrentBox & "]/CSTM_BOXTYPE") <> "" Then 
+				BoxType = s.e("/SHIPMENT/PACKAGE[" & CurrentBox & "]/CSTM_BOXTYPE")
+				
+				Select Case Trim(Sys.UserGlobal("UseBoxDimensionTable"))
+					Case "0"
+						'Do nothing as customer isn't using Box Type to get Dimensions
+					Case "1"
+						'Code calls function from User_scripts to find box diminsion from CSTM(BoxDimensions) Table
+						Call LookupBoxType(BoxType, CurrentBox)
+					Case "2"
+						'Code calls functions to find box information from customer supplied BoxDimensions) Table
+						Call CustomerLookupBoxType(BoxType, CurrentBox)
+				End Select
+				Sys.RefreshScreen	
+				Shipment.Rate
+			End If
+			
+		Case "/SHIPMENT/COMMON/CONSIGNEE_RESIDENTIAL"
+			'Code re-rates shipment and diplays new charges if weight field
+			'isn't empty.
+			REM If CNum(s.e("SHIPMENT/PACKAGE/WEIGHT")) > 0 Then
+				REM Shipment.Rate
+			REM End If
+			REM Sys.RefreshScreen
+			REM Sys.UserGlobal("SPECIALSERVICESFLAG") = "True"
+			
+		Case "/SHIPMENT/CMS/CSTM_CUSTOMERID"
+			'Code calls function that looks up customer information from CSTM(Customer) table if manual 
+			'shipment and CompanyID is not empty.
+			If UCase(trim(s.e("SHIPMENT/CMS/CSTM_INTERFACE"))) = "MANUAL" _
+				And s.e("SHIPMENT/CMS/CSTM_CUSTOMERID") <> "" Then
+				
+				'Depending on value contained in UseCustomerTable field. Code calls function to build Customer combo box 
+				'from CSTM(Customer) table, by CustomerID or Customer Name.
+				Select Case Trim(Sys.UserGlobal("UseCustomerTable"))
+					Case "0"
+						'Do nothing as customer isn't using Customer table
+					Case "1"
+						'Code calls function from User_scripts to find department information from CSTM(Department) table
+						strCustomerID = UCase(trim(s.e("SHIPMENT/CMS/CSTM_CUSTOMERID")))
+						Call LookupCustomerbyID(strCustomerID)
+					Case "2"
+						'Code calls functions that looks up Customers by Name from CSTM(Customer) table
+						strCustomerName = UCase(trim(s.e("SHIPMENT/CMS/CSTM_CUSTOMERID")))
+						Call LookupCustomerbyName(strCustomerName)
+				End Select
+			
+				'Code refreshes Proship Shipping screen
+				Sys.RefreshScreen
+			End If
+			
+		Case "/SHIPMENT/COMMON/CONSIGNEE_ACCOUNT"
+			'Code calls Proship function to rate shipment when leaving Consignee Account field
+			If Left(Trim(s.e("SHIPMENT/SERVICE")),12) = "BWTI_UPS.UPS" _
+				Or Left(Trim(s.e("SHIPMENT/SERVICE")),14) = "BWTI_FXRS.FXRS" Then
+				
+				If s.e("SHIPMENT/COMMON/CONSIGNEE_ACCOUNT") <> "" Then
+				
+					Shipment.Rate
+					Sys.RefreshScreen
+				End If
+				
+			ElseIf UCase(trim(s.e("SHIPMENT/CMS/CSTM_INTERFACE"))) <> "MANUAL" _
+				And s.e("SHIPMENT/CMS/CSTM_CUSTOMERID") <> "" Then				
+
+				MessageText = "You are about to change shipping address on a " & vbCrLF & _
+						  "(COC, Work Order, InterPlant or IntraPlant) shipment" & vbCrLF & vbCrLf & _
+						  "Continue with address change?"
+				MessageButtons = vbQuestion+vbYesNo+vbDefaultButton2
+				MessageToolBar = "Off-Line Customer Address"
+				
+				'Code updates shipping screen if operator clicks on YES button
+				If vbYes = Msgbox(MessageText,MessageButtons,MessageToolBar) Then
+					strCustomerID = UCase(trim(s.e("SHIPMENT/CMS/CSTM_CUSTOMERID")))
+					Call LookupCustomer(strCustomerID)
+					Sys.RefreshScreen
+				Else
+					s.e("SHIPMENT/CMS/CSTM_CUSTOMERID") = ""
+					Sys.RefreshScreen
+				End If
+			End If
+			
+		Case "/SHIPMENT/CMS/CSTM_FREIGHT_CODE"
+			'Code updates ProShip payment terms depending upon Freight Code from screen.
+			If Trim(s.e("SHIPMENT/CMS/CSTM_FREIGHT_CODE")) = "003" _
+				Or Trim(s.e("SHIPMENT/CMS/CSTM_FREIGHT_CODE")) = "009" Then
+				
+				s.e("SHIPMENT/COMMON/TERMS") = "CONSIGNEE" 
+				s.e("SHIPMENT/PACKAGE/TERMS") = "CONSIGNEE" 
+				Sys.RefreshScreen
+				
+			ElseIf Trim(s.e("SHIPMENT/CMS/CSTM_FREIGHT_CODE")) = "007" Then
+				
+				s.e("SHIPMENT/COMMON/TERMS") = "THIRD_PARTY" 
+				s.e("SHIPMENT/PACKAGE/TERMS") = "THIRD_PARTY"
+				Sys.RefreshScreen				
+			
+			Else
+				s.e("SHIPMENT/COMMON/TERMS") = "SHIPPER" 
+				s.e("SHIPMENT/PACKAGE/TERMS") = "SHIPPER"
+				Sys.RefreshScreen						
+			End If
+			
+		Case "/SHIPMENT/CMS/CSTM_CUSTOMER_SHIPMETHOD_IN"
+			'Code looks up customer supplied ship method to find Proship ship method. If field
+			'CSTM_Customer_Shipmethoed_in is populated.
+			If S.E("SHIPMENT/CMS/CSTM_CUSTOMER_SHIPMETHOD_IN") <> "" Then
+				ShipMethod = Trim(S.E("SHIPMENT/CMS/CSTM_CUSTOMER_SHIPMETHOD_IN"))
+				TranslateType = "InBound"
+				Call TranslateShipMethod(ShipMethod, TranslateType)
+				Sys.RefreshScreen
+			
+				'Manual shipment Code read system setup XML to figure out if Proship client has a scale confgiured
+				If UCase(trim(s.e("SHIPMENT/CMS/CSTM_INTERFACE"))) = "MANUAL" Then
+					If SYS.ElementExists("SYSTEM/CONFIG/SCALE/SYMBOL") > 0 Then
+						If SYS.E("SYSTEM/CONFIG/SCALE/SYMBOL") <> "" Then
+							s.e("SHIPMENT/PACKAGE/WEIGHT")= S.Weigh	
+							
+							'If proship gets weight from scale, then we try rating shipment.
+							If CNum(Shipment.E("SHIPMENT/PACKAGE/WEIGHT")) > 0 then
+								Shipment.Rate 0
+							End If
+						End If
+					End If
+				End If
+			End If
+			
+		Case "/SHIPMENT/CMS/BOL/CSTM_SCREEN_COMMODITY_CLASS"
+			'Added 07-31-09 - Code calls function to populates LTL detail screen with data from
+			'CSTM(LTLCommodity) table
+			strCommodity = s.e("SHIPMENT/CMS/BOL/CSTM_SCREEN_COMMODITY_CLASS")
+			If strCommodity <> "" Then
+				LookupLTLCommodity(strCommodity)
+			End If
+			
+		Case "/SHIPMENT/CMS/CSTM_ONLY_PRINT_ADDRESS_LABEL_FLAG"
+			'Added 02-23-2010 - Code creates PACKAGE node in proship for number of address 
+			'labels to print if field is checked. If field is unchecked then we turn off Multi-piece.
+			If s.e("/SHIPMENT/CMS/CSTM_ONLY_PRINT_ADDRESS_LABEL_FLAG") = "True" Then
+				'Code displays Input Box asking for number of Address Labels to Print 
+				FieldTitle = "Address Labels to Print:"
+				ScreenTitle = "Addess Labels"
+				MiscDefault = ""
+				PasswordDisplay = "False"
+				
+				intAddressLabels = BigInputBox(FieldTitle,ScreenTitle,MiscDefault,CBool(PasswordDisplay))
+				
+				'Code sets weight of fiest package
+				s.e("SHIPMENT/PACKAGE[1]/WEIGHT") = 1
+				'Code sets Proship service to Address labels
+				s.e("SHIPMENT/SERVICE") = "BWTI_LTL.LTL.ADDRESSLABEL"
+				'Code sets number of Address nodes to Create
+				s.e("SHIPMENT/CMS/CSTM_ADDRESS_LABELS") = intAddressLabels
+				'Code re-freshes proship cleint screen.
+				Sys.RefreshScreen
+			
+			Else
+				'Code resets Address labels to print
+				s.e("SHIPMENT/CMS/CSTM_ADDRESS_LABELS") = ""
+			End If
+			
+		Case Else
+			Msgbox FieldName & " not handeled",,FieldText
+	End Select
+End Function

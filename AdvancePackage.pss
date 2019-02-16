@@ -1,0 +1,40 @@
+Sub AdvancePackage()
+	'=========================================================================
+	' This subroutine runs each time operator presses F7 to add a new box to current
+	' shipment
+	'=========================================================================
+	
+	'Code blanks out Weight,BoxType and Dimensions on screen and set focus to 
+	'weight field and thenc reads scale.
+	CurrentBox = Shipment.CP
+	s.e("SHIPMENT/PACKAGE[" & CurrentBox & "]/WEIGHT") = ""
+	s.e("SHIPMENT/PACKAGE[" & CurrentBox & "]/DIMENSION") = ""
+	s.e("/SHIPMENT/PACKAGE[" & CurrentBox & "]/CSTM_BOXTYPE") = ""
+	SetFocus "/SHIPMENT/PACKAGE/WEIGHT"	
+	s.e("SHIPMENT/PACKAGE[" & CurrentBox & "]/WEIGHT") = Shipment.Weigh
+	
+	s.e("SHIPMENT/PACKAGE[" & CurrentBox & "]/MISC_REFERENCE_1") = s.e("SHIPMENT/PACKAGE[1]/MISC_REFERENCE_1") 
+	s.e("SHIPMENT/PACKAGE[" & CurrentBox & "]/MISC_REFERENCE_2") = s.e("SHIPMENT/PACKAGE[1]/MISC_REFERENCE_2")  
+	
+	'Code checks to see if weight of current box is greater then 0. If so then rates shipment.
+	'If not displays message to tell operator to put box on scale.
+	If CNum(s.e("SHIPMENT/PACKAGE[" & CurrentBox & "]/WEIGHT")) > 0 then
+		Shipment.Rate,0
+	Else
+		MsgBox "Please put Package on Scale and Press Enter Key", vbExclamation + vbOkOnly, "LoadShipment - Scale Error" 
+		'This code gets weight from scale.
+		s.e("SHIPMENT/PACKAGE[" & CurrentBox & "]/WEIGHT") = Shipment.Weigh 
+	
+		If CNum(s.e("SHIPMENT/PACKAGE[" & CurrentBox & "]/WEIGHT")) > 0 then
+			Shipment.Rate,0
+		Else
+			'Code blanks out weight on screen and set focus to weight field.
+			s.e("SHIPMENT/PACKAGE[" & CurrentBox & "]/WEIGHT") = ""
+			SetFocus "/SHIPMENT/PACKAGE/WEIGHT"	
+		End If
+	End If
+	
+	'Code calls function that runs customer specific business rules
+	Call CustomerAdvancePackage(Currentbox)
+	
+End Sub

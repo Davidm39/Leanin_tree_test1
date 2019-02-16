@@ -1,0 +1,39 @@
+Sub HistoryRightClick(Index, IDKey)
+   Select Case Index
+        Case 1 'Void This Package
+            'Get Carrier from history
+            Carrier = S_History.E("//SHIPMENT[@KEY='" & IDKey & "']/SERVICE")
+			IDKey2 = S_History.E("//SHIPMENT[@KEY='" & IDKey & "']//SHIPPER_REFERENCE")
+            'Pull off last part
+            Carrier = StrReverse(Mid(StrReverse(Carrier),Instr(1,StrReverse(Carrier),".") + 1))
+            CarrierPlaintext = SYS.E("//CARRIER[SYMBOL='" & Carrier & "']/PLAINTEXT")
+            'Figure out the unique field per carrier
+            IDKey = S_History.E("//SHIPMENT[@KEY='" & IDKey & "']//TRACKING_NUMBER")
+			'MsgBox "Idkey [" & Idkey & "] not handeled by HistoryRightClick",48, "Sorry, not implemented..."
+            Select Case Carrier
+                Case "BWTI_FXRS.FXRS", "TANDATA_UPS.UPS","BWTI_FXRS.CAFE"
+                    IDKeyName = "TRACKING_NUMBER"
+                    ShowVoidForm  CarrierPlaintext,"",IDKey,IDKeyName ,"","","",""
+                Case "BWTI_UPS.UPS", "BWTI_UPS.MI"
+                    IDKeyName = "TRACKING_NO"
+                    ShowVoidForm  CarrierPlaintext,"",IDKey,IDKeyName ,"","","",""
+                Case "BWTI_DHL.DHL"
+                    IDKeyName = "trackno"
+                    ShowVoidForm  CarrierPlaintext,"",IDKey,IDKeyName ,"","","",""
+				Case "BWTI_USPS.USPS"
+                    IDKeyName = "TRACKNO"
+                    ShowVoidForm  CarrierPlaintext,"",IDKey,IDKeyName ,"","","",""
+                Case "ELS.USPS"
+                    IDKeyName = "TRACKING_NUMBER"
+                    ShowVoidForm  CarrierPlaintext,"",IDKey,IDKeyName ,"","","",""
+				Case "BWTI_LTL.LTL", "BWTI_MR.LTL", "MR.LTL"
+                    IDKeyName = "TRACKING_NUMBER"
+					IDKeyName2 = "SHIPPER_REFERENCE"
+                    ShowVoidForm "Manual Carrier","",IDKey,IDKeyName,IDKey2,IDKeyName2,"",""
+                Case Else
+                    Msgbox "Please use the void menu!", 48, "Sorry, not implemented..."
+            End Select
+        Case Else
+        	MsgBox "Index [" & Index & "] not handeled by HistoryRightClick",48, "Sorry, not implemented..."
+    End Select
+End Sub

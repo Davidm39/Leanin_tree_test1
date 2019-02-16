@@ -1,0 +1,92 @@
+Sub ResetShipment()
+	'==================================================================
+	'These values get set when ProShip starts and after each transaction.
+	'==================================================================
+    s.e("SHIPMENT/PACKAGE/PACKAGING") = "CUSTOM" 'Set to "Customer Packaging"
+    s.e("SHIPMENT/PACKAGE/TERMS") = "SHIPPER" 	'Set to "Prepaid"
+	s.e("SHIPMENT/COMMON/SHIPPER") = Sys.UserGlobal("Warehouse")  
+	s.e("SHIPMENT/CMS/CSTM_INTERFACE") = "Manual"
+	s.e("SHIPMENT/CMS/CSTM_ADDRESSVALIDATED") = "N"
+	's.e("SHIPMENT/CMS/CSTM_DEPARTMENT") = Sys.UserGlobal("Department")
+	s.e("SHIPMENT/CMS/CSTM_COMPANYID") = Sys.UserGlobal("CompanyCode")
+	s.e("SHIPMENT/CMS/CSTM_PLANTNUMBER") = Sys.UserGlobal("PlantNumber")
+	s.e("SHIPMENT/CMS/CSTM_WORKSTATIONID") = Sys.UserGlobal("WorkstationID")
+	s.e("SHIPMENT/CMS/CSTM_DATABASELOGGEDINTO") = " You are signed into Database:  " & trim(Sys.UserGlobal("DataBaseName"))
+	s.e("SHIPMENT/COMMON/CONSIGNEE_COUNTRY") = "US" 
+	Shipment.E("/SHIPMENT/CMS/CSTM_MAILROOM") = Sys.UserGlobal("Mailroom")
+	SBNote "You are signed into Database:  " & Trim(Sys.UserGlobal("DataBaseName"))
+	
+	'Code changes ship date on screen if operator has turned on this feature
+	If 	Sys.UserGlobal("Futureflag")= "N" Then
+		s.e("//SHIPDATE") = Date
+	ELSE
+		s.e("//SHIPDATE") = Sys.UserGlobal("FutureDate")
+	End If
+	
+	'Writes current shipper id from Global variable XML to current Shipment XML
+	s.e("SHIPMENT/CMS/CSTM_SHIPPERID") = Sys.UserGlobal("ShipperID")
+	
+	'Code sets global variables back to Empty or False
+	Sys.UserGlobal("ConsumingPlant") = ""
+	Sys.UserGlobal("RecStockRoom")  = "" 
+	sys.UserGlobal("ZipCodeFound") = "False" 
+	sys.userGlobal("HazmatLabel") = "False"
+	Sys.UserGlobal("SpecialServicesFlag") = "False"
+	Sys.UserGlobal("OrderNumber") = ""
+	Sys.UserGlobal("NumberOfLPN") = ""
+	Sys.UserGlobal("HeaderID") = ""
+	Sys.UserGlobal("CurrentShipMethod") = ""
+	Sys.UserGlobal("FreightDiscountRate") = 1
+	s.e("SHIPMENT/CMS/CSTM_USERTEXT1") = MACHINE.NAME
+	s.e("SHIPMENT/CMS/CSTM_USERTEXT2") = ""
+	s.e("SHIPMENT/CMS/CSTM_USERTEXT3")= ""
+	s.e("SHIPMENT/CMS/CSTM_USERTEXT4")= ""
+	s.e("SHIPMENT/CMS/CSTM_USERTEXT5")= ""
+	
+	s.e("SHIPMENT/CMS/CSTM_USERNUMBER1") = 0.000
+	s.e("SHIPMENT/CMS/CSTM_USERNUMBER2") = 0.000
+	s.e("SHIPMENT/CMS/CSTM_USERNUMBER3") = 0.000
+	s.e("SHIPMENT/CMS/CSTM_USERNUMBER4") = 0.000
+	s.e("SHIPMENT/CMS/CSTM_USERNUMBER5") = 0.000
+	
+	'Added 02-09-2010- Field handles whether or not we pass back customers discount shipping charges.
+	s.e("SHIPMENT/CMS/CSTM_SHIPPING_CHARGE_FLAG") = "False"
+	
+	'Added 02-17-2010 - Field handles whether or not we just print Address labels for shipment
+	s.e("SHIPMENT/CMS/CSTM_ONLY_PRINT_ADDRESS_LABEL_FLAG") = "False"
+	s.e("SHIPMENT/CMS/CSTM_ADDRESS_LABELS") = ""
+	
+	'Added 07-21-2015 - Field handles whether or not shipmen just contains Racks
+	Shipment.E("/SHIPMENT/CMS/CSTM_RACKS_ONLY_SHIPMENT_FLAG") = "False"
+	
+	'Calls subroutine that removes any coutries code from state combo box when shipping
+	'a domesctic shipment.
+	Call FixStates
+	
+	SetFocus "/SHIPMENT/COMMON/SHIPPER_REFERENCE"
+	Sys.RefreshScreen
+	
+	'for fake multipeice
+	sMPData = Sys.E("/SYSTEM/GLOBALV/MULTIPIECE/IMAGE")
+	If sMPData <> "" Then 
+		'decode the old package data
+		sMPData = B64_Decode(sMPData)
+		'load the decoded information
+		Shipment.X.LoadXML(sMPData)		
+		'clear the saved data
+		Sys.E("/SYSTEM/GLOBALV/MULTIPIECE/IMAGE") = ""
+		'Nix an in-process but not final MP shipment
+		Shipment.MakeMultipiece(1)
+		piece_number = Cnum(Shipment.E("/SHIPMENT/PACKAGE/PIECE_NUMBER"))+1
+		
+		Set ndl0 = SYS.DD.SelectSingleNode("/SYSTEM/PROSHIP_GLOBALS/FAKEMPS/PACKAGE[" & piece_number & "]/P")
+		If Not ndl0 is Nothing Then
+			For Each nod0 In ndl0.childNodes	
+				Shipment.E("/SHIPMENT/PACKAGE/" & nod0.nodename) = nod0.text
+			Next		
+			Set ndl0 = Nothing
+		End If
+		Shipment.ship()	
+	End If	
+	
+End Sub
